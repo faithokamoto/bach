@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Find segments where mates map in an allele-biased way.
+See --help for documentation.
+
+For each SNP (assumed to be biallelic) in a VCF,
+for sample BAM files (assumed to be position-sorted/indexed) in a directory,
+split mates by their SNP allele, and find segments with allele bias.
+
+Scan SNP chromosome with 15Mbp windows (5Mbp steps),
+counts ref/alt mates for all samples, finds consistent bias.
+Adjacent windows merged.
+
+Heavily based on a script written by ChatGPT.
+"""
+
+import argparse  # Command-line argument parsing
+import csv  # CSV output
+import os  # File operations
+import pysam  # Reading BAMs and VCF
+
+from typing import Dict, List, Tuple
+
+MBP = 1_000_000
+"""Mega base pair (1 million bp)."""
+WINDOW_STEP = 5 * MBP
+"""Step size for scanning window."""
+HET_GENO = [(0, 1), (1, 0)]
+"""Possible phased heterozygous genotypes."""
+
+def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
+                        ref: str, alt: str) -> Dict[str, List[int]]:
+    """Get mate positions for reads supporting ref/alt alleles.
+
+    Ignores reads with unmapped mates and reads that do not cover the SNP.
+    BAM file must be position-sorted and indexed for fast random access.
+
+    Parameters
+    ----------
+    bam_path : str
+        Path to the BAM file.
+    chrom : str
+        Chromosome of the SNP.
+    pos : int
+        Position of the SNP in bp.
+    ref : str
+        Reference allele of the SNP.
+    alt : str
+        Alternate allele of the SNP.
+
+    Returns
+    -------
+    Dict[str, List[int]]
+        Two lists of bp positions: mates of ref/alt-supporting reads.
+    """
+
+    ref_mates = []
+    alt_mates = []
+    with pysam.AlignmentFile(bam_path, 'rb') as bam_file:
+        for read in bam_file.fetch(chrom, pos - 1, pos):
+            # We want mate pairs with high-quality mapping to the same chr
+            if (read.is_secondary or read.mate_is_unmapped
+                or read.reference_name != read.next_reference_name):
+                continue
+            
+            ref_positions = read.get_reference_positions(full_length=True)
+            # Handle deletions of the SNP position
+            if pos - 1 not in ref_positions: continue
+            
+            base = read.query_sequence[ref_positions.index(pos - 1)]
+            if base == ref:
+                ref_mates.append(read.next_reference_start)
+            elif base == alt:
+                alt_mates.append(read.next_reference_start)
+    
+    return {'ref': sorted(ref_mates), 'alt': sorted(alt_mates)}
+
+def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
+                             chr_length: int, snp_pos: int, max_opposite: float,
+                             max_neutral: float) -> List[Tuple[int, int, str]]:
+    """Scan for read mate allele-biased segments.
+
+    Scans the chromosome in 5Mbp steps to identify segments
+    with consistent allele bias across samples.
+    Excludes segments containing the SNP itself.
+
+    Parameters
+    ----------
+    all_mates : Dict[str, Dict[str, List[int]]]
+        `{sample_name: {ref/alt [bp mate positions]}}` dictionary.
+    chr_length : int
+        Length of the chromosome.
+    snp_pos : int
+        Position of the SNP in bp (to exclude from analysis).
+    max_opposite: float
+        Maximum % of samples with opposite bias.
+    max_neutral : float
+        Maximum % of samples without bias.
+
+    Returns
+    -------
+    List[Tuple[int, int, str]]
+        List of biased segments, each as `(start, end, bias)`.
+    """
+
+    max_opposite_num = max_opposite * len(all_mates)
+    max_neutral_num = max_neutral * len(all_mates)
+
+    # Start at 0-15Mbp; the loop adds 5Mbp to start
+    cur_start, cur_end = -WINDOW_STEP, 2 * WINDOW_STEP
+    biased_segments = []
+    all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
+                         'end': {'ref': 0, 'alt': 0}}
+                         for sample in all_mates.keys()}
+
+    while cur_end < chr_length:
+        cur_start += WINDOW_STEP
+        cur_end = min(cur_end + WINDOW_STEP, chr_length)
+        # Skip segments containing the SNP allele
+        if cur_start <= snp_pos <= cur_end: continue
+
+        bias_counts = {'ref': 0, 'alt': 0, 'neutral': 0}
+        for sample in all_mates.keys():
+            mates = all_mates[sample]
+            ptrs = all_ptrs[sample]
+
+            # Adjust pointers to keep only mates within the current window
+            for side, cutoff in {'start': cur_start, 'end': cur_end}.items():
+                for allele in ['ref', 'alt']:
+                    i = ptrs[side][allele]
+                    while i < len(mates[allele]) and mates[allele][i] < cutoff:
+                        i += 1
+                    ptrs[side][allele] = i
+
+            ref_count = ptrs['end']['ref'] - ptrs['start']['ref']
+            alt_count = ptrs['end']['alt'] - ptrs['start']['alt']
+
+            if ref_count > alt_count: bias_counts['ref'] += 1
+            elif alt_count > ref_count: bias_counts['alt'] += 1
+            else: bias_counts['neutral'] += 1
+
+        if (min(bias_counts['ref'], bias_counts['alt']) <= max_opposite_num
+            and bias_counts['neutral'] <= max_neutral_num):
+            bias = 'ref' if bias_counts['ref'] > bias_counts['alt'] else 'alt'
+            # Extend previous segment if adjacent/overlapping and same bias
+            if (biased_segments and biased_segments[-1][1] >= cur_start 
+                and biased_segments[-1][2] == bias):
+                biased_segments[-1] = (biased_segments[-1][0], cur_end, bias)
+            else: biased_segments.append((cur_start, cur_end, bias))
+    
+    return [(start, end, bias) 
+            for start, end, bias in biased_segments]
+
+if __name__ == '__main__':
+    # Set up argparse
+    parser = argparse.ArgumentParser(description='Find allele-biased segments. '
+                                     'Compare mates of reads with SNP alleles.')
+    parser.add_argument('vcf', help='Path to the SNP VCF file')
+    parser.add_argument('bam_dir', help='Directory containing BAM files')
+    parser.add_argument('output', help='Output CSV file path')
+
+    parser.add_argument('--bam-ext', required=False, default='.pos.sorted.bam',
+                        help='Extension for BAMs (<sample>.ext)')
+    parser.add_argument('--max-opposite', required=False, default=0, type=float,
+                        help='Max share (0-1) of heterozygotes with other bias')
+    parser.add_argument('--max-neutral', required=False, default=0, type=float,
+                        help='Max share (0-1) of heterozygotes with 0 change')
+    parser.add_argument('--max-drop', required=False, default=0, type=int,
+                        help='Max number of dropped homozygous/missing samples')
+    args = parser.parse_args()
+
+    # Basic validity checks
+    if not os.path.isfile(args.vcf):
+        raise FileNotFoundError(f'VCF {args.vcf} does not exist')
+    if not os.path.isdir(args.bam_dir):
+        raise FileNotFoundError(f'BAM dir {args.bam_dir} is not a directory')
+    if not (0 <= args.max_opposite < 0.5):
+        raise ValueError(f'Max opposite samples share ({args.max_opposite}) '
+                         'must be in [0, 0.5)')
+    if not (0 <= args.max_opposite < 1):
+        raise ValueError(f'Max neutral samples share ({args.max_neutral}) '
+                         'must be in [0, 1)')
+
+    # Check files in the given directory
+    bams = {file.split('.')[0]: f'{args.bam_dir}/{file}'
+            for file in os.listdir(args.bam_dir) if file.endswith(args.bam_ext)}
+    if not bams:
+        raise FileNotFoundError(f'No {args.bam_dir}/*.{args.bam_ext}')
+    if args.max_drop > len(bams) - 1:
+        raise ValueError(f'Max dropped samples count {args.max_drop} '
+                         f'is too high for {len(bams)} sample BAMs')
+    
+    # Main logic
+    with open(args.output, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        # Header row
+        writer.writerow(['SNP_ID', 'CHROM', 'SNP_POS', 
+                         'BIAS_START_MBP', 'BIAS_END_MBP', 'BIAS'])
+
+        vcf_reader = pysam.VariantFile(args.vcf)
+
+        for record in vcf_reader:
+            rsid, chrom, snp_pos = record.id, record.chrom, record.pos
+            # All SNPs assumed to be biallelic
+            ref, alt = record.ref, record.alts[0]
+
+            chr_length = vcf_reader.header.contigs[chrom].length
+
+            # Only use heterozygous genotypes
+            is_het = {name: s['GT'] in HET_GENO 
+                      for name, s in record.samples.items()}
+            if len(bams) - sum(is_het.values()) > args.max_drop: continue
+
+            mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
+                     for sample, file in bams.items() if is_het[sample]}
+            
+            biased_segments = scan_for_biased_segments(
+                mates, chr_length, snp_pos, args.max_opposite, args.max_neutral)
+            
+            for start, end, bias in biased_segments:
+                writer.writerow([rsid, chrom, snp_pos, 
+                                 int(start / MBP), int(end / MBP), bias])

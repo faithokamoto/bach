@@ -1,0 +1,7 @@
+name: bach
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python
+  - pysam

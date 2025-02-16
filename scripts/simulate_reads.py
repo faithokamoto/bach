@@ -8,10 +8,6 @@ and following sample genotypes in the VCF.
 
 Depth and variants with allele bias are parameters.
 
-Scan SNP chromosome with 15Mbp windows (5Mbp steps),
-counts ref/alt mates for all samples, finds consistent bias.
-Adjacent windows merged.
-
 Written by ChatGPT.
 """
 

@@ -1,12 +1,12 @@
 ##fileformat=VCFv4.2
 ##source=https://samtools.github.io/hts-specs/VCFv4.2.pdf
-##contig=<ID=20,length=62435964,assembly=B36,md5=f126cdf8a6e0c7f379d618ff66beb2da,species="Homo sapiens",taxonomy=x>
+##contig=<ID=NC_000020.11,length=62435964,assembly=B36,md5=f126cdf8a6e0c7f379d618ff66beb2da,species="Homo sapiens",taxonomy=x>
 ##phasing=partial
+##FILTER=<ID=q10,Description="Quality below 10">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	sample1	sample2	sample3
-20	14370	rs6054257	G	A	29	PASS	.	GT	1|0	0|1	./.
-20	17330	.	T	A	3	.	GT	0|0	0|1	1/0
-20	17340	.	C	CA	9	FAIL	GT	1|0 0|1 1|0
-20	1110696	rs6040355	A	G,T	67	PASS	.	GT	1|2	2|1	2/1
-20	1230237	.	T	.	47	PASS	.	GT	0|0	0|0	./.
-20	1234567	microsat1	GTC	G,GTCT	50	PASS	.	GT	0/1	./.	./.
+NC_000020.11	85729	rs6054257	G	A	29	PASS	.	GT	1|0	0|1	./.
+NC_000020.11	1182049	.	T	G	9	q10	.	GT	1|0	0|1	1|0
+NC_000020.11	1182052	rs6040355	A	G,T	67	PASS	.	GT	1|2	2|1	2/1
+NC_000020.11	1182059	.	C	G	47	PASS	.	GT	0/0	0|1	1/0
+NC_000020.11	10518425	rs6040005	C	T	50	PASS	.	GT	0/1	./.	./.

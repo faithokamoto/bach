@@ -206,7 +206,7 @@ if __name__ == '__main__':
 
         for record in vcf_reader:
             # Skip SNPs which failed filtration or have >2 alleles
-            if record.filter or len(record.alts) > 2: continue
+            if not record.filter or len(record.alts) > 2: continue
 
             rsid, chrom, snp_pos = record.id, record.chrom, record.pos
             ref, alt = record.ref, record.alts[0]

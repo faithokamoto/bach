@@ -28,8 +28,8 @@ WINDOW_STEP = 5 * MBP
 HET_GENO = [(0, 1), (1, 0)]
 """Possible phased heterozygous genotypes."""
 
-def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
-                        check_phasing: bool) -> Dict[str, List[int]]:
+def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
+                        ref: str, alt: str) -> Dict[str, List[int]]:
     """Get mate positions for reads supporting ref/alt alleles.
 
     Ignores reads with unmapped mates and reads that do not cover the SNP.
@@ -47,8 +47,6 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
         Reference allele of the SNP.
     alt : str
         Alternate allele of the SNP.
-    check_phasing : bool
-        Whether to check for/remove reads with impossible phasing.
 
     Returns
     -------
@@ -235,8 +233,6 @@ if __name__ == '__main__':
                         help='Max share (0-1) of heterozygotes with 0 change')
     parser.add_argument('--max-drop', required=False, default=0, type=int,
                         help='Max number of dropped homozygous/missing samples')
-    parser.add_argument('--check-phasing', action='store_true',
-                        help='Check for/ignore reads with impossible phasing')
     args = parser.parse_args()
 
     # Basic validity checks
@@ -283,8 +279,7 @@ if __name__ == '__main__':
                       for name, s in record.samples.items()}
             if len(bams) - sum(is_het.values()) > args.max_drop: continue
 
-            mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt,
-                                                 args.check_phasing)
+            mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
                      for sample, file in bams.items() if is_het[sample]}
             
             biased_segments = scan_for_biased_segments(

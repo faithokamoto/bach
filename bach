@@ -17,6 +17,7 @@ import argparse  # Command-line argument parsing
 import csv  # CSV output
 import os  # File operations
 import pysam  # Reading BAMs and VCF
+from scipy.stats import binomtest
 
 from typing import Dict, List, Tuple
 
@@ -89,7 +90,7 @@ def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
     Parameters
     ----------
     all_mates : Dict[str, Dict[str, List[int]]]
-        `{sample_name: {ref/alt [bp mate positions]}}` dictionary.
+        `{sample_name: {ref/alt: [bp mate positions]}}` dictionary.
     chr_length : int
         Length of the chromosome.
     snp_pos : int
@@ -154,6 +155,72 @@ def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
     return [(start, end, bias) 
             for start, end, bias in biased_segments]
 
+def get_binomial_pvalue(all_mates: Dict[str, Dict[str, List[int]]],
+                        biased_segments: List[Tuple[int, int, str]]
+                        ) -> List[Tuple[int, int, str, float]]:
+    """
+    Calculates binomial test p-values for allele-biased segments.
+
+    Parameters
+    ----------
+    all_mates : Dict[str, Dict[str, List[int]]]
+        `{sample_name: {ref/alt: [bp mate positions]}}` dictionary.
+    biased_segments : List[Tuple[int, int, str]]
+        Output of `scan_for_biased_segments`, formatted as `(start, end, bias)`.
+
+    Returns
+    -------
+    List[Tuple[int, int, str, float]]
+        List of biased segments with p-values, formatted as `(start, end, bias, p-value)`.
+    """
+    results = []
+
+    # Initialize pointers for efficient counting
+    all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
+                         'end': {'ref': 0, 'alt': 0}}
+                         for sample in all_mates.keys()}
+
+    for start, end, bias in biased_segments:
+        ref_total, alt_total = 0, 0
+        sample_counts = []
+
+        for sample in all_mates.keys():
+            mates = all_mates[sample]
+            ptrs = all_ptrs[sample]
+
+            # Adjust pointers to include only mates within the segment
+            for side, cutoff in {"start": start, "end": end}.items():
+                for allele in ["ref", "alt"]:
+                    i = ptrs[side][allele]
+                    while i < len(mates[allele]) and mates[allele][i] < cutoff:
+                        i += 1
+                    ptrs[side][allele] = i
+
+            # Count ref/alt reads in the segment for this sample
+            ref_count = ptrs["end"]["ref"] - ptrs["start"]["ref"]
+            alt_count = ptrs["end"]["alt"] - ptrs["start"]["alt"]
+            print(f'{sample} {ref_count} {alt_count}')
+
+            # Keep track of counts per sample for filtering
+            if ref_count > alt_count:
+                sample_counts.append(("ref", ref_count, alt_count))
+                ref_total += 1
+            elif alt_count > ref_count:
+                sample_counts.append(("alt", ref_count, alt_count))
+                alt_total += 1
+        print(f'{ref_total} {alt_total}')
+
+        # Ignore neutral samples and test the observed bias using a binomial test
+        if ref_total + alt_total > 0:
+            # Number of samples in the majority bias group
+            k = max(ref_total, alt_total)  
+            n = ref_total + alt_total
+            p_value = binomtest(k, n, p=0.5, alternative="two-sided").pvalue
+
+            results.append((start, end, bias, p_value))
+
+    return results
+
 if __name__ == '__main__':
     # Set up argparse
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
@@ -200,7 +267,7 @@ if __name__ == '__main__':
         writer = csv.writer(csvfile)
         # Header row
         writer.writerow(['SNP_ID', 'CHROM', 'SNP_POS', 
-                         'BIAS_START_MBP', 'BIAS_END_MBP', 'BIAS'])
+                         'BIAS_START_MBP', 'BIAS_END_MBP', 'BIAS', 'P_VALUE'])
 
         vcf_reader = pysam.VariantFile(args.vcf)
 
@@ -221,11 +288,14 @@ if __name__ == '__main__':
             mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt,
                                                  args.check_phasing)
                      for sample, file in bams.items() if is_het[sample]}
+
+            print(mates)
             
             biased_segments = scan_for_biased_segments(
                 mates, chr_length, snp_pos, args.max_opposite, args.max_neutral)
             
-            for start, end, bias in biased_segments:
-                # TODO: add p-value via binomial test
+            biased_segments_with_p = get_binomial_pvalue(mates, biased_segments)
+            
+            for start, end, bias, p in biased_segments_with_p:
                 writer.writerow([rsid, chrom, snp_pos, 
-                                 int(start / MBP), int(end / MBP), bias])
+                                 int(start / MBP), int(end / MBP), bias, p])

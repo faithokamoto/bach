@@ -35,7 +35,7 @@ Test by:
 
 To run `bach` on the provided test data, use 
 ```
-./bach --max-opposite 0 --max-neutral 1 --max-drop 1 test/snps.vcf test/bams test/out.csv
+./bach --max-opposite 0 --max-neutral 0 --max-drop 1 test/snps.vcf test/bams test/out.csv
 ```
 
 To generate new test data, use 

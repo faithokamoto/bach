@@ -68,7 +68,6 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
             if pos - 1 not in ref_positions: continue
             
             base = read.query_sequence[ref_positions.index(pos - 1)]
-            # TODO: check phasing
             if base == ref:
                 ref_mates.append(read.next_reference_start)
             elif base == alt:

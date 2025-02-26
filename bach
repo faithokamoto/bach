@@ -199,7 +199,6 @@ def get_binomial_pvalue(all_mates: Dict[str, Dict[str, List[int]]],
             # Count ref/alt reads in the segment for this sample
             ref_count = ptrs["end"]["ref"] - ptrs["start"]["ref"]
             alt_count = ptrs["end"]["alt"] - ptrs["start"]["alt"]
-            print(f'{sample} {ref_count} {alt_count}')
 
             # Keep track of counts per sample for filtering
             if ref_count > alt_count:
@@ -208,7 +207,6 @@ def get_binomial_pvalue(all_mates: Dict[str, Dict[str, List[int]]],
             elif alt_count > ref_count:
                 sample_counts.append(("alt", ref_count, alt_count))
                 alt_total += 1
-        print(f'{ref_total} {alt_total}')
 
         # Ignore neutral samples and test the observed bias using a binomial test
         if ref_total + alt_total > 0:
@@ -288,8 +286,6 @@ if __name__ == '__main__':
             mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt,
                                                  args.check_phasing)
                      for sample, file in bams.items() if is_het[sample]}
-
-            print(mates)
             
             biased_segments = scan_for_biased_segments(
                 mates, chr_length, snp_pos, args.max_opposite, args.max_neutral)

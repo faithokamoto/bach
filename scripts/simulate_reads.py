@@ -65,7 +65,7 @@ def simulate_reads(vcf_path: str, reference: dict, depth: int, biased_variants: 
                 
                 alleles = [record.ref] + list(record.alts)
                 for _ in range(depth):
-                    selected_allele = random.choice(alleles) if 1 in genotype else alleles[genotype[0]]
+                    selected_allele = alleles[random.choice(genotype)]
                     read_start = record.pos - 75  # Assume 150bp reads
                     mate_offset = get_mate_offset(record.pos in biased_variants)
                     if mate_offset < 0: mate_offset = 0
@@ -73,7 +73,7 @@ def simulate_reads(vcf_path: str, reference: dict, depth: int, biased_variants: 
                         mate_offset = len(reference[record.chrom]) - 1
                     read_seq = list(reference[record.chrom][read_start:read_start+150])
                     if selected_allele != record.ref:
-                        read_seq[75] = selected_allele  # Mutate SNP position
+                        read_seq[74] = selected_allele  # Mutate SNP position
                     mate_seq = reference[record.chrom][read_start + mate_offset: read_start + mate_offset + 150]
                     reads[sample].append((record.chrom, read_start, ''.join(read_seq), read_start + mate_offset, mate_seq))
     return reads

@@ -44,9 +44,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--bam-ext', required=False, default='.pos.sorted.bam',
                         help='Extension for BAMs (<sample>.ext)')
     parser.add_argument('--max-opposite', required=False, default=0, type=float,
-                        help='Max share (0-1) of heterozygotes with other bias')
+                        help='Max share [0,0.5) of heterozygotes with other bias')
     parser.add_argument('--max-neutral', required=False, default=0, type=float,
-                        help='Max share (0-1) of heterozygotes with 0 change')
+                        help='Max share [0,1) of heterozygotes with 0 change')
     parser.add_argument('--max-drop', required=False, default=0, type=int,
                         help='Max number of dropped homozygous/missing samples')
     return parser.parse_args()
@@ -57,6 +57,8 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f'VCF {args.vcf} does not exist')
     if not os.path.isdir(args.bam_dir):
         raise FileNotFoundError(f'BAM dir {args.bam_dir} is not a directory')
+    if '.bam' not in args.bam_ext:
+        raise ValueError(f'BAM file extension must have ".bam"')
     if not (0 <= args.max_opposite < 0.5):
         raise ValueError(f'Max opposite samples share ({args.max_opposite}) '
                          'must be in [0, 0.5)')

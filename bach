@@ -55,6 +55,19 @@ def parse_arguments() -> argparse.Namespace:
                         help='Max share [0,1) of heterozygotes with 0 change')
     parser.add_argument('-D', '--max-drop', required=False, default=0, type=int,
                         help='Max number of dropped homozygous/missing samples')
+    
+    # Window arguments
+    parser.add_argument('-w', '--window-width',
+                        required=False, default=15, type=float,
+                        help='Minimum window width, in Mbp, to scan with '
+                             '(Consecutive windows are merged)')
+    parser.add_argument('-s', '--window-step', 
+                        required=False, default=None, type=float, 
+                        help='Step to move window, in Mbp. Use one of -s or -r')
+    parser.add_argument('-r', '--read-rounding',
+                        required=False, default=None, type=float,
+                        help='Mbp threshold to round read positions to for '
+                             'empirical window choice. Use one of -s or -r')
     return parser.parse_args()
 
 def check_illogical_arguments(args: argparse.Namespace) -> None:
@@ -65,12 +78,36 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f'BAM dir {args.bam_dir} is not a directory')
     if '.bam' not in args.bam_ext:
         raise ValueError(f'BAM file extension must have ".bam"')
+    
     if not (0 <= args.max_opposite < 0.5):
         raise ValueError(f'Max opposite samples share ({args.max_opposite}) '
                          'must be in [0, 0.5)')
     if not (0 <= args.max_opposite < 1):
         raise ValueError(f'Max neutral samples share ({args.max_neutral}) '
                          'must be in [0, 1)')
+    
+    if args.window_width <= 1:
+        raise ValueError(f'Window width {args.window_width}Mbp must be >=1Mbp')
+    if args.window_width >= 50:
+        raise ValueError(f'Window width {args.window_width}Mbp is too large. '
+                         'Did you enter a value in bp instead of Mbp?')
+    if (args.window_step is not None) + (args.read_rounding is not None) != 1:
+        raise ValueError(f'Use exactly one of -s or -r')
+    if args.window_step:
+        if args.window_step <= 0.5:
+            raise ValueError(f'Window step {args.window_step}Mbp '
+                             'must be >=0.5Mbp.')
+        if args.window_step >= 10:
+            raise ValueError(f'Window step {args.window_step}Mbp is too large. '
+                             'Did you enter a vaue in bp instead of Mbp?')
+    if args.read_rounding:
+        if args.read_rounding <= 0.1:
+            raise ValueError(f'Read rounding threshould {args.read_rounding}Mbp'
+                             ' must be >=0.1Mbp.')
+        if args.read_rounding >= 10:
+            raise ValueError(f'Read rounding threshold {args.read_rounding}Mbp '
+                             'is too large. Did you enter a value in bp '
+                             'instead of Mbp?')
     
 def locate_bams(dir: str, ext: str, min_samples: int) -> SAMPLE_BAMS:
     """Find BAM files within given directory.
@@ -241,7 +278,7 @@ def adjust_biased_segments(biased_segments: List[Tuple[int, int, str]],
     return biased_segments
 
 def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
-                             chr_length: int, snp_pos: int, max_opposite: float,
+                             window_starts: List[int], max_opposite: float,
                              max_neutral: float) -> List[Tuple[int, int, str]]:
     """Scan for read mate allele-biased segments.
 
@@ -253,10 +290,8 @@ def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
     ----------
     all_mates : Dict[str, MATE_POS]
         `{sample_name: mate positions}` dictionary.
-    chr_length : int
-        Length of the chromosome.
-    snp_pos : int
-        Position of the SNP in bp (to exclude from analysis).
+    window_starts : List[int]
+        Starting locations for windows to test.
     max_opposite : float
         Maximum % of samples with opposite bias.
     max_neutral : float
@@ -278,12 +313,8 @@ def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
                          'end': {'ref': 0, 'alt': 0}}
                          for sample in all_mates.keys()}
 
-    while cur_end < chr_length:
-        # TODO: test other step method
-        cur_start += WINDOW_STEP
-        cur_end = min(cur_end + WINDOW_STEP, chr_length)
-        # Skip segments containing the SNP allele
-        if cur_start <= snp_pos <= cur_end: continue
+    for cur_start in window_starts:
+        cur_end = cur_start + WINDOW_STEP*3
 
         all_ptrs, bias_counts = count_biased_samples(all_mates, all_ptrs, 
                                                      cur_start, cur_end)
@@ -398,8 +429,15 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
                 for sample, file in bams.items() if is_het[sample]}
     
+    # TODO: test other step method
+    # Windows can start from 0 to 15Mbp before the end
+    start_range = range(0, chr_length - 3*WINDOW_STEP + 1, WINDOW_STEP)
+    window_starts = [pos for pos in start_range if 
+                     # Filter out windows which contain the SNP itself
+                     not pos <= snp_pos <= pos + 3*WINDOW_STEP]
+    
     biased_segments = scan_for_biased_segments(
-        mates, chr_length, snp_pos, max_opposite, max_neutral)
+        mates, window_starts, max_opposite, max_neutral)
     
     return add_binomial_pvalue(mates, biased_segments)
 

@@ -37,17 +37,23 @@ def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments with argparse."""
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
                                      'Compare mates of reads with SNP alleles.')
-    parser.add_argument('vcf', help='Path to the SNP VCF file')
-    parser.add_argument('bam_dir', help='Directory containing BAM files')
-    parser.add_argument('output', help='Output CSV file path')
-
-    parser.add_argument('--bam-ext', required=False, default='.pos.sorted.bam',
+    # File arguments
+    parser.add_argument('-v', '--vcf', help='Path to the SNP VCF file')
+    parser.add_argument('-d', '--bam-dir', help='Directory with BAM files')
+    parser.add_argument('-o', '--output', help='Output CSV file path')
+    parser.add_argument('-e', '--bam-ext',
+                        required=False, default='.pos.sorted.bam',
                         help='Extension for BAMs (<sample>.ext)')
-    parser.add_argument('--max-opposite', required=False, default=0, type=float,
-                        help='Max share [0,0.5) of heterozygotes with other bias')
-    parser.add_argument('--max-neutral', required=False, default=0, type=float,
+    
+    # Sample/bias count arguments
+    parser.add_argument('-O', '--max-opposite',
+                        required=False, default=0, type=float,
+                        help='Max share [0,0.5) of heterozygotes '
+                             'with opposite bias')
+    parser.add_argument('-N', '--max-neutral',
+                        required=False, default=0, type=float,
                         help='Max share [0,1) of heterozygotes with 0 change')
-    parser.add_argument('--max-drop', required=False, default=0, type=int,
+    parser.add_argument('-D', '--max-drop', required=False, default=0, type=int,
                         help='Max number of dropped homozygous/missing samples')
     return parser.parse_args()
 

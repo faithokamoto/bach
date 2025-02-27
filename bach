@@ -21,14 +21,17 @@ from scipy.stats import binomtest
 
 from typing import Dict, List, Tuple
 
+SAMPLE_BAMS = Dict[str, str]
+"""Dictionary of {sample name: BAM file name} lookups."""
+MATE_POS = Dict[str, List[int]]
+"""Dictionary of {ref/alt: [bp mate positions]} for a given sample."""
+SEGMENT = Tuple[int, int, str, float]
+"""Biased segment formatted as `(start, end, bias, p-value)`"""
+
 MBP = 1_000_000
 """Mega base pair (1 million bp)."""
 WINDOW_STEP = 5 * MBP
 """Step size for scanning window."""
-HET_GENO = [(0, 1), (1, 0)]
-"""Possible phased heterozygous genotypes."""
-
-# TODO: define some custom types
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments with argparse."""
@@ -61,7 +64,7 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise ValueError(f'Max neutral samples share ({args.max_neutral}) '
                          'must be in [0, 1)')
     
-def locate_bams(dir: str, ext: str, min_samples: int) -> Dict[str, str]:
+def locate_bams(dir: str, ext: str, min_samples: int) -> SAMPLE_BAMS:
     """Find BAM files within given directory.
 
     Assumes that files are named <sample_name>.<ext>
@@ -77,8 +80,8 @@ def locate_bams(dir: str, ext: str, min_samples: int) -> Dict[str, str]:
     
     Returns
     -------
-    Dict[str, str]
-        `{sample_name : file_name}` dictionary.
+    SAMPLE_BAMS
+        BAM files found.
     """
 
     bams = {file.split('.')[0]: f'{dir}/{file}'
@@ -91,7 +94,7 @@ def locate_bams(dir: str, ext: str, min_samples: int) -> Dict[str, str]:
     return bams
 
 def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
-                        ref: str, alt: str) -> Dict[str, List[int]]:
+                        ref: str, alt: str) -> MATE_POS:
     """Get mate positions for reads supporting ref/alt alleles.
 
     Ignores reads with unmapped mates and reads that do not cover the SNP.
@@ -112,7 +115,7 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
 
     Returns
     -------
-    Dict[str, List[int]]
+    MATE_POS
         Two lists of bp positions: mates of ref/alt-supporting reads.
     """
 
@@ -137,7 +140,7 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
     
     return {'ref': sorted(ref_mates), 'alt': sorted(alt_mates)}
 
-def count_biased_samples(all_mates: Dict[str, Dict[str, List[int]]], 
+def count_biased_samples(all_mates: Dict[str, MATE_POS], 
                          all_ptrs: Dict[str, Dict[str, Dict[str, int]]],
                          cur_start: int, cur_end: int
                          ) -> Tuple[Dict[str, Dict[str, Dict[str, int]]], 
@@ -150,8 +153,8 @@ def count_biased_samples(all_mates: Dict[str, Dict[str, List[int]]],
 
     Parameters
     ----------
-    all_mates : Dict[str, Dict[str, List[int]]]
-        `{sample_name: {ref/alt: [bp mate positions]}}` dictionary.
+    all_mates : Dict[str, MATE_POS]
+        `{sample_name: mate positions}` dictionary.
     all_ptrs : Dict[str, Dict[str, Dict[str, int]]]
         `{sample_name: {start/end: {ref/alt: index}}}` dictionary.
     cur_start : int
@@ -229,7 +232,7 @@ def adjust_biased_segments(biased_segments: List[Tuple[int, int, str]],
         else: biased_segments.append((cur_start, cur_end, bias))
     return biased_segments
 
-def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
+def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
                              chr_length: int, snp_pos: int, max_opposite: float,
                              max_neutral: float) -> List[Tuple[int, int, str]]:
     """Scan for read mate allele-biased segments.
@@ -240,8 +243,8 @@ def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
 
     Parameters
     ----------
-    all_mates : Dict[str, Dict[str, List[int]]]
-        `{sample_name: {ref/alt: [bp mate positions]}}` dictionary.
+    all_mates : Dict[str, MATE_POS]
+        `{sample_name: mate positions}` dictionary.
     chr_length : int
         Length of the chromosome.
     snp_pos : int
@@ -283,22 +286,22 @@ def scan_for_biased_segments(all_mates: Dict[str, Dict[str, List[int]]],
     return [(start, end, bias) 
             for start, end, bias in biased_segments]
 
-def add_binomial_pvalue(all_mates: Dict[str, Dict[str, List[int]]],
+def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
                         biased_segments: List[Tuple[int, int, str]]
-                        ) -> List[Tuple[int, int, str, float]]:
+                        ) -> List[SEGMENT]:
     """
     Calculates binomial test p-values for allele-biased segments.
 
     Parameters
     ----------
-    all_mates : Dict[str, Dict[str, List[int]]]
-        `{sample_name: {ref/alt: [bp mate positions]}}` dictionary.
+    all_mates : Dict[str, MATE_POS]
+        `{sample_name: mate positions}` dictionary.
     biased_segments : List[Tuple[int, int, str]]
         Output of `scan_for_biased_segments`, formatted as `(start, end, bias)`.
 
     Returns
     -------
-    List[Tuple[int, int, str, float]]
+    List[SEGMENT]
         List of biased segments, formatted as `(start, end, bias, p-value)`.
     """
     results = []
@@ -347,15 +350,15 @@ def add_binomial_pvalue(all_mates: Dict[str, Dict[str, List[int]]],
 
     return results
 
-def run_pipeline(bams: Dict[str, str], max_opposite: float, max_neutral: float,
+def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
                  max_drop: int, record: pysam.VariantRecord, chr_length: int
-                 ) -> List[Tuple[int, int, str, float]]:
+                 ) -> List[SEGMENT]:
     """Run mate allele biased segment detection pipeline for a variant.
     
     Parameters
     ----------
-    bams : Dict[str, str]
-        `{sample_name : file_name}` dictionary.
+    bams : SAMPLE_BAMS
+        BAM files to use.
     max_opposite : float
         Maximum % of samples with opposite bias.
     max_neutral : float
@@ -369,8 +372,8 @@ def run_pipeline(bams: Dict[str, str], max_opposite: float, max_neutral: float,
 
     Returns
     -------
-    List[Tuple[int, int, str, float]]
-        List of biased segments, formatted as `(start, end, bias, p-value)`.
+    List[SEGMENT]
+        Biased segments found.
     """
 
     # Skip SNPs which failed filtration or have >2 alleles
@@ -380,8 +383,8 @@ def run_pipeline(bams: Dict[str, str], max_opposite: float, max_neutral: float,
     ref, alt = record.ref, record.alts[0]
 
     # Only use heterozygous genotypes
-    is_het = {name: s['GT'] in HET_GENO 
-                for name, s in record.samples.items()}
+    is_het = {name: s['GT'][0] != s['GT'][1]
+              for name, s in record.samples.items()}
     if len(bams) - sum(is_het.values()) > max_drop: return []
 
     mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)

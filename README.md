@@ -42,8 +42,12 @@ Test by:
 To run `bach` on the provided test data, use 
 ```
 ./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 15 --window-step 5 \
-    -v test/snps.vcf -d test/bams -o test/out.csv
+    --window-width 15 --move-step 5 \
+    -v test/snps.vcf -d test/bams -o test/using_step.csv
+
+./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
+    --window-width 15 --round-to 5 \
+    -v test/snps.vcf -d test/bams -o test/using_round.csv
 ```
 
 To generate new test data, use 

@@ -30,8 +30,6 @@ SEGMENT = Tuple[int, int, str, float]
 
 MBP = 1_000_000
 """Mega base pair (1 million bp)."""
-WINDOW_STEP = 5 * MBP
-"""Step size for scanning window."""
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments with argparse."""
@@ -61,10 +59,10 @@ def parse_arguments() -> argparse.Namespace:
                         required=False, default=15, type=float,
                         help='Minimum window width, in Mbp, to scan with '
                              '(Consecutive windows are merged)')
-    parser.add_argument('-s', '--window-step', 
+    parser.add_argument('-s', '--move-step', 
                         required=False, default=None, type=float, 
                         help='Step to move window, in Mbp. Use one of -s or -r')
-    parser.add_argument('-r', '--read-rounding',
+    parser.add_argument('-r', '--round-to',
                         required=False, default=None, type=float,
                         help='Mbp threshold to round read positions to for '
                              'empirical window choice. Use one of -s or -r')
@@ -91,21 +89,21 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
     if args.window_width >= 50:
         raise ValueError(f'Window width {args.window_width}Mbp is too large. '
                          'Did you enter a value in bp instead of Mbp?')
-    if (args.window_step is not None) + (args.read_rounding is not None) != 1:
+    if (args.move_step is not None) + (args.round_to is not None) != 1:
         raise ValueError(f'Use exactly one of -s or -r')
-    if args.window_step:
-        if args.window_step <= 0.5:
-            raise ValueError(f'Window step {args.window_step}Mbp '
+    if args.move_step:
+        if args.move_step <= 0.5:
+            raise ValueError(f'Window step {args.move_step}Mbp '
                              'must be >=0.5Mbp.')
-        if args.window_step >= 10:
-            raise ValueError(f'Window step {args.window_step}Mbp is too large. '
+        if args.move_step >= 10:
+            raise ValueError(f'Window step {args.move_step}Mbp is too large. '
                              'Did you enter a vaue in bp instead of Mbp?')
-    if args.read_rounding:
-        if args.read_rounding <= 0.1:
-            raise ValueError(f'Read rounding threshould {args.read_rounding}Mbp'
+    if args.round_to:
+        if args.round_to <= 0.1:
+            raise ValueError(f'Read rounding threshould {args.round_to}Mbp'
                              ' must be >=0.1Mbp.')
-        if args.read_rounding >= 10:
-            raise ValueError(f'Read rounding threshold {args.read_rounding}Mbp '
+        if args.round_to >= 10:
+            raise ValueError(f'Read rounding threshold {args.round_to}Mbp '
                              'is too large. Did you enter a value in bp '
                              'instead of Mbp?')
     
@@ -277,9 +275,9 @@ def adjust_biased_segments(biased_segments: List[Tuple[int, int, str]],
         else: biased_segments.append((cur_start, cur_end, bias))
     return biased_segments
 
-def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
-                             window_starts: List[int], max_opposite: float,
-                             max_neutral: float) -> List[Tuple[int, int, str]]:
+def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
+                         window_starts: List[int], max_opposite: float,
+                         max_neutral: float) -> List[Tuple[int, int, str]]:
     """Scan for read mate allele-biased segments.
 
     Scans the chromosome in 5Mbp steps to identify segments
@@ -290,6 +288,8 @@ def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
     ----------
     all_mates : Dict[str, MATE_POS]
         `{sample_name: mate positions}` dictionary.
+    window_width : int
+        Window width, in bp, to use during scanning.
     window_starts : List[int]
         Starting locations for windows to test.
     max_opposite : float
@@ -306,15 +306,13 @@ def scan_for_biased_segments(all_mates: Dict[str, MATE_POS],
     max_opposite_num = max_opposite * len(all_mates)
     max_neutral_num = max_neutral * len(all_mates)
 
-    # Start at 0-15Mbp; the loop adds 5Mbp to start
-    cur_start, cur_end = -WINDOW_STEP, 2 * WINDOW_STEP
     biased_segments = []
     all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
                          'end': {'ref': 0, 'alt': 0}}
                          for sample in all_mates.keys()}
 
     for cur_start in window_starts:
-        cur_end = cur_start + WINDOW_STEP*3
+        cur_end = cur_start + window_width
 
         all_ptrs, bias_counts = count_biased_samples(all_mates, all_ptrs, 
                                                      cur_start, cur_end)
@@ -390,8 +388,9 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
     return results
 
 def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
-                 max_drop: int, record: pysam.VariantRecord, chr_length: int
-                 ) -> List[SEGMENT]:
+                 max_drop: int, record: pysam.VariantRecord, chr_length: int,
+                 window_width: int, move_step: int = None,
+                 round_to: int = None) -> List[SEGMENT]:
     """Run mate allele biased segment detection pipeline for a variant.
     
     Parameters
@@ -408,6 +407,14 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
         Variant to scan for.
     chr_length : int
         Length of this variant's chromosome.
+    window_width : int
+        Window width, in bp, to use during scanning.
+    move_step : int [ default None ]
+        Window step, in bp, to use during scanning.
+        If None, then read rounding will be used.
+    round_to : int [ default None ]
+        What to round read positions to, in Mbp, for window start.
+        If None, then window step will be used.
 
     Returns
     -------
@@ -429,15 +436,22 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
                 for sample, file in bams.items() if is_het[sample]}
     
-    # TODO: test other step method
-    # Windows can start from 0 to 15Mbp before the end
-    start_range = range(0, chr_length - 3*WINDOW_STEP + 1, WINDOW_STEP)
-    window_starts = [pos for pos in start_range if 
-                     # Filter out windows which contain the SNP itself
-                     not pos <= snp_pos <= pos + 3*WINDOW_STEP]
+    if move_step is not None:
+        window_starts = range(0, chr_length - window_width + 1, move_step)
+    else:
+        window_starts = set()
+        for sample_mates in mates.values():
+            for allele_mates in sample_mates.values():
+                for pos in allele_mates:
+                    window_starts.add(round(pos / round_to) * round_to)
+        window_starts = sorted(window_starts)
+
+    window_starts = [pos for pos in window_starts if 
+                    # Filter out windows which contain the SNP itself
+                    not pos <= snp_pos <= pos + window_width]
     
-    biased_segments = scan_for_biased_segments(
-        mates, window_starts, max_opposite, max_neutral)
+    biased_segments = find_biased_segments(
+        mates, window_width, window_starts, max_opposite, max_neutral)
     
     return add_binomial_pvalue(mates, biased_segments)
 
@@ -446,6 +460,11 @@ if __name__ == '__main__':
     check_illogical_arguments(args)
     # At least one more than max_drop samples are needed for worst-case analysis
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
+
+    # Convert window arguments to bp whole numbers
+    window_width = int(args.window_width * MBP)
+    move_step = None if args.move_step is None else int(args.move_step * MBP)
+    round_to = None if args.round_to is None else int(args.round_to * MBP)
     
     # Main logic
     with open(args.output, 'w', newline='') as csvfile:
@@ -460,7 +479,8 @@ if __name__ == '__main__':
                 chr_length = vcf.header.contigs[record.chrom].length
                 biased_segments = run_pipeline(
                     bams, args.max_opposite, args.max_neutral,
-                    args.max_drop, record, chr_length)
+                    args.max_drop, record, chr_length, 
+                    window_width, move_step, round_to)
                 
                 # Write results for this variant
                 for start, end, bias, p in biased_segments:

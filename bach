@@ -38,7 +38,7 @@ def parse_arguments() -> argparse.Namespace:
     
     parser.add_argument('-p', '--print-progress', metavar='#',
                         required=False, default=None, type=float,
-                        help='Progress upate frequency (# variants processed)')
+                        help='Progress update frequency (# variants processed)')
     
     file_args = parser.add_argument_group('filepaths')
     file_args.add_argument('-v', '--vcf', help='Path to the SNP VCF')

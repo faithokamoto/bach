@@ -36,6 +36,10 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
                                      'Compare mates of reads with SNP alleles.')
     
+    parser.add_argument('-p', '--print-progress',
+                        required=False, default=None, type=float,
+                        help='Progress upate frequency (# variants processed)')
+    
     file_args = parser.add_argument_group('filepaths')
     file_args.add_argument('-v', '--vcf', help='Path to the SNP VCF')
     file_args.add_argument('-d', '--bam-dir', help='Directory with BAM files')
@@ -50,14 +54,15 @@ def parse_arguments() -> argparse.Namespace:
     bias_args.add_argument('-O', '--max-opposite',
                            required=False, default=0, type=float,
                            help='Max share [0,0.5) of heterozygotes '
-                                'with opposite bias')
+                                'with opposite bias [default=0]')
     bias_args.add_argument('-N', '--max-neutral',
                            required=False, default=0, type=float,
                            help='Max share [0,1) of heterozygotes '
-                                'with 0 change')
+                                'with 0 change [default=0]')
     bias_args.add_argument('-D', '--max-drop',
                            required=False, default=0, type=int,
-                           help='Max count of homozygous/missing samples')
+                           help='Max count of homozygous/missing samples '
+                                '[default=0]')
     
     # Window arguments
     window_args = parser.add_argument_group('window parameters')
@@ -75,6 +80,9 @@ def parse_arguments() -> argparse.Namespace:
 
 def check_illogical_arguments(args: argparse.Namespace) -> None:
     """Run initial argument validity checks."""
+    if args.print_progress is not None and args.print_progress <= 0:
+        raise ValueError(f'Progress print frequency must be positive')
+    
     if not os.path.isfile(args.vcf):
         raise FileNotFoundError(f'VCF {args.vcf} does not exist')
     if not os.path.isdir(args.bam_dir):
@@ -138,10 +146,10 @@ def locate_bams(bam_dir: str, bam_ext: str, min_samples: int) -> SAMPLE_BAMS:
             for file in os.listdir(bam_dir) if file.endswith(bam_ext)}
     # Verify file quantity
     if not bams:
-        raise FileNotFoundError(f'No {bam_dir}/*.{bam_ext}')
+        raise FileNotFoundError(f'No {bam_dir}/*{bam_ext}')
     if min_samples > len(bams):
         raise ValueError(f'At least {min_samples} sample(s) needed, but there '
-                         f'are only {len(bams)} {bam_dir}/*.{bam_ext} files')
+                         f'are only {len(bams)} {bam_dir}/*{bam_ext} files')
     return bams
 
 def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
@@ -430,23 +438,23 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     Returns
     -------
     List[SEGMENT]
-        Biased segments found.
+        Biased segments found, or None if the variant wasn't tested.
     """
 
     # Only use high-quality biallelic variants
-    if not record.filter or len(record.alts) != 1: return []
+    if not record.filter or len(record.alts) != 1: return None
 
     chrom, ref, alt = record.chrom, record.ref, record.alts[0]
     # Convert from 1-index VCF to 0-indexed BAM
     snp_pos = record.pos - 1
 
     # Only use SNPs
-    if len(ref) > 1 or len(alt) > 1: return []
+    if len(ref) > 1 or len(alt) > 1: return None
 
     # Only use heterozygous genotypes
     is_het = {name: s['GT'][0] != s['GT'][1]
               for name, s in record.samples.items()}
-    if len(bams) - sum(is_het.values()) > max_drop: return []
+    if len(bams) - sum(is_het.values()) > max_drop: return None
 
     mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
                 for sample, file in bams.items() if is_het[sample]}
@@ -480,6 +488,7 @@ if __name__ == '__main__':
     check_illogical_arguments(args)
     # At least one more than max_drop samples are needed for worst-case analysis
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
+    print(f'{len(bams)} found in {args.bam_dir}/<sample>{args.bam_ext}')
 
     # Convert window arguments to bp whole numbers
     window_width = int(args.window_width * MBP)
@@ -494,15 +503,41 @@ if __name__ == '__main__':
                          'BIAS_START_MBP', 'BIAS_END_MBP', 'BIAS', 'P_VALUE'])
 
         with pysam.VariantFile(args.vcf) as vcf:
+            # Ignore VCF samples which don't have BAMs
+            vcf.subset_samples(bams.keys())
+
+            # Progress trackers
+            total_variants = 0
+            variants_dropped = 0
+            total_biased_segments = 0
+            
             for record in vcf:
-                # Get results for this variant
+                total_variants += 1
                 chr_length = vcf.header.contigs[record.chrom].length
+
+                # Get results for this variant
                 biased_segments = run_pipeline(
                     bams, args.max_opposite, args.max_neutral,
                     args.max_drop, record, chr_length, 
                     window_width, move_step, round_to)
                 
-                # Write results for this variant
-                for start, end, bias, p in biased_segments:
-                    writer.writerow([record.id, record.chrom, record.pos, 
-                                    int(start / MBP), int(end / MBP), bias, p])
+                if biased_segments is None: variants_dropped += 1
+                else:
+                    total_biased_segments += len(biased_segments)
+                
+                    # Write results for this variant
+                    for start, end, bias, p in biased_segments:
+                        writer.writerow([record.id, record.chrom, record.pos, 
+                                        int(start/MBP), int(end/MBP), bias, p])
+                
+                if (args.print_progress is not None 
+                    and total_variants % args.print_progress == 0):
+                    print(f'{total_variants} variants processed: '
+                          f'{total_variants - variants_dropped} tested, '
+                          f'{variants_dropped} dropped')
+    
+        print(f'{total_variants} variants read from VCF')
+        print(f'{total_variants - variants_dropped} non-filtered biallelic SNPs'
+              f' with >={len(bams) - args.max_drop} heterozygotes tested')
+        print(f'{variants_dropped} other variants dropped')
+        print(f'{total_biased_segments} biased segments written to CSV')

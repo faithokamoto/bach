@@ -36,7 +36,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
                                      'Compare mates of reads with SNP alleles.')
     
-    parser.add_argument('-p', '--print-progress',
+    parser.add_argument('-p', '--print-progress', metavar='#',
                         required=False, default=None, type=float,
                         help='Progress upate frequency (# variants processed)')
     
@@ -44,35 +44,35 @@ def parse_arguments() -> argparse.Namespace:
     file_args.add_argument('-v', '--vcf', help='Path to the SNP VCF')
     file_args.add_argument('-d', '--bam-dir', help='Directory with BAM files')
     file_args.add_argument('-o', '--output', help='Output CSV path')
-    file_args.add_argument('-e', '--bam-ext',
+    file_args.add_argument('-e', '--bam-ext', metavar='.<ext>',
                            required=False, default='.pos.sorted.bam',
                            help='Extension for BAMs (<sample>.ext) '
                                 '[default=".pos.sorted.bam"]')
     
     # Sample/bias count arguments 
     bias_args = parser.add_argument_group('bias parameters')
-    bias_args.add_argument('-O', '--max-opposite',
+    bias_args.add_argument('-O', '--max-opposite', metavar='0.*',
                            required=False, default=0, type=float,
                            help='Max share [0,0.5) of heterozygotes '
                                 'with opposite bias [default=0]')
-    bias_args.add_argument('-N', '--max-neutral',
+    bias_args.add_argument('-N', '--max-neutral', metavar='0.*',
                            required=False, default=0, type=float,
                            help='Max share [0,1) of heterozygotes '
                                 'with 0 change [default=0]')
-    bias_args.add_argument('-D', '--max-drop',
+    bias_args.add_argument('-D', '--max-drop', metavar='#',
                            required=False, default=0, type=int,
                            help='Max count of homozygous/missing samples '
                                 '[default=0]')
     
     # Window arguments
     window_args = parser.add_argument_group('window parameters')
-    window_args.add_argument('-w', '--window-width', type=float,
+    window_args.add_argument('-w', '--window-width', metavar='Mbp', type=float,
                              help='Window width, in Mbp, to scan with '
                                   '(Consecutive windows are merged)')
-    window_args.add_argument('-s', '--move-step',
+    window_args.add_argument('-s', '--move-step', metavar='Mbp',
                              required=False, default=None, type=float, 
                              help='Mbp step size, in Mbp. Use one of -s or -r')
-    window_args.add_argument('-r', '--round-to',
+    window_args.add_argument('-r', '--round-to', metavar='Mbp',
                              required=False, default=None, type=float,
                              help='Mbp to round read positions to in empirical '
                                   'window choice. Use one of -s or -r')
@@ -510,7 +510,7 @@ if __name__ == '__main__':
             total_variants = 0
             variants_dropped = 0
             total_biased_segments = 0
-            
+
             for record in vcf:
                 total_variants += 1
                 chr_length = vcf.header.contigs[record.chrom].length

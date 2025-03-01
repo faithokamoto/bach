@@ -499,7 +499,7 @@ if __name__ == '__main__':
     with open(args.output, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         # Header row
-        writer.writerow(['SNP_ID', 'CHROM', 'SNP_POS', 
+        writer.writerow(['CHROM', 'SNP_POS', 'SNP_ID',
                          'BIAS_START_MBP', 'BIAS_END_MBP', 'BIAS', 'P_VALUE'])
 
         with pysam.VariantFile(args.vcf) as vcf:
@@ -527,7 +527,7 @@ if __name__ == '__main__':
                 
                     # Write results for this variant
                     for start, end, bias, p in biased_segments:
-                        writer.writerow([record.id, record.chrom, record.pos, 
+                        writer.writerow([record.pos, record.id, record.chrom,
                                         int(start/MBP), int(end/MBP), bias, p])
                 
                 if (args.print_progress is not None 

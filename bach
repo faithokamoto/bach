@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """Find segments where mates map in an allele-biased way.
-See --help for documentation.
 
-For each SNP (assumed to be biallelic) in a VCF,
+For each non-filtered biallic SNP in a VCF,
 for sample BAM files (assumed to be position-sorted/indexed) in a directory,
 split mates by their SNP allele, and find segments with allele bias.
 
-Scan SNP chromosome with 15Mbp windows (5Mbp steps),
-counts ref/alt mates for all samples, finds consistent bias.
-Adjacent windows merged.
+Scan SNP chromosome, counts ref/alt mates for all samples,
+and finds consistent bias. Adjacent windows merged.
 
-Heavily based on a script written by ChatGPT.
+Heavily based on code written by ChatGPT.
 """
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
 import os  # File operations
 import pysam  # Reading BAMs and VCF
-from scipy.stats import binomtest
+from scipy.stats import binomtest # Test significance of each biased site
 
 from typing import Dict, List, Tuple
 
@@ -25,6 +23,8 @@ SAMPLE_BAMS = Dict[str, str]
 """Dictionary of {sample name: BAM file name} lookups."""
 MATE_POS = Dict[str, List[int]]
 """Dictionary of {ref/alt: [bp mate positions]} for a given sample."""
+PTR_POS = Dict[str, Dict[str, int]]
+"""Dictionary of {start/end: {ref/alt: index}} pointers for a given sample."""
 SEGMENT = Tuple[int, int, str, float]
 """Biased segment formatted as `(start, end, bias, p-value)`"""
 
@@ -35,37 +35,42 @@ def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments with argparse."""
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
                                      'Compare mates of reads with SNP alleles.')
-    # File arguments
-    parser.add_argument('-v', '--vcf', help='Path to the SNP VCF file')
-    parser.add_argument('-d', '--bam-dir', help='Directory with BAM files')
-    parser.add_argument('-o', '--output', help='Output CSV file path')
-    parser.add_argument('-e', '--bam-ext',
-                        required=False, default='.pos.sorted.bam',
-                        help='Extension for BAMs (<sample>.ext)')
     
-    # Sample/bias count arguments
-    parser.add_argument('-O', '--max-opposite',
-                        required=False, default=0, type=float,
-                        help='Max share [0,0.5) of heterozygotes '
-                             'with opposite bias')
-    parser.add_argument('-N', '--max-neutral',
-                        required=False, default=0, type=float,
-                        help='Max share [0,1) of heterozygotes with 0 change')
-    parser.add_argument('-D', '--max-drop', required=False, default=0, type=int,
-                        help='Max number of dropped homozygous/missing samples')
+    file_args = parser.add_argument_group('filepaths')
+    file_args.add_argument('-v', '--vcf', help='Path to the SNP VCF')
+    file_args.add_argument('-d', '--bam-dir', help='Directory with BAM files')
+    file_args.add_argument('-o', '--output', help='Output CSV path')
+    file_args.add_argument('-e', '--bam-ext',
+                           required=False, default='.pos.sorted.bam',
+                           help='Extension for BAMs (<sample>.ext) '
+                                '[default=".pos.sorted.bam"]')
+    
+    # Sample/bias count arguments 
+    bias_args = parser.add_argument_group('bias parameters')
+    bias_args.add_argument('-O', '--max-opposite',
+                           required=False, default=0, type=float,
+                           help='Max share [0,0.5) of heterozygotes '
+                                'with opposite bias')
+    bias_args.add_argument('-N', '--max-neutral',
+                           required=False, default=0, type=float,
+                           help='Max share [0,1) of heterozygotes '
+                                'with 0 change')
+    bias_args.add_argument('-D', '--max-drop',
+                           required=False, default=0, type=int,
+                           help='Max count of homozygous/missing samples')
     
     # Window arguments
-    parser.add_argument('-w', '--window-width',
-                        required=False, default=15, type=float,
-                        help='Minimum window width, in Mbp, to scan with '
-                             '(Consecutive windows are merged)')
-    parser.add_argument('-s', '--move-step', 
-                        required=False, default=None, type=float, 
-                        help='Step to move window, in Mbp. Use one of -s or -r')
-    parser.add_argument('-r', '--round-to',
-                        required=False, default=None, type=float,
-                        help='Mbp threshold to round read positions to for '
-                             'empirical window choice. Use one of -s or -r')
+    window_args = parser.add_argument_group('window parameters')
+    window_args.add_argument('-w', '--window-width', type=float,
+                             help='Window width, in Mbp, to scan with '
+                                  '(Consecutive windows are merged)')
+    window_args.add_argument('-s', '--move-step',
+                             required=False, default=None, type=float, 
+                             help='Mbp step size, in Mbp. Use one of -s or -r')
+    window_args.add_argument('-r', '--round-to',
+                             required=False, default=None, type=float,
+                             help='Mbp to round read positions to in empirical '
+                                  'window choice. Use one of -s or -r')
     return parser.parse_args()
 
 def check_illogical_arguments(args: argparse.Namespace) -> None:
@@ -74,8 +79,8 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f'VCF {args.vcf} does not exist')
     if not os.path.isdir(args.bam_dir):
         raise FileNotFoundError(f'BAM dir {args.bam_dir} is not a directory')
-    if '.bam' not in args.bam_ext:
-        raise ValueError(f'BAM file extension must have ".bam"')
+    if not args.bam_ext.endswith('.bam'):
+        raise ValueError(f'BAM file extension must end in ".bam"')
     
     if not (0 <= args.max_opposite < 0.5):
         raise ValueError(f'Max opposite samples share ({args.max_opposite}) '
@@ -84,11 +89,12 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise ValueError(f'Max neutral samples share ({args.max_neutral}) '
                          'must be in [0, 1)')
     
-    if args.window_width <= 1:
+    if args.window_width < 1:
         raise ValueError(f'Window width {args.window_width}Mbp must be >=1Mbp')
     if args.window_width >= 50:
         raise ValueError(f'Window width {args.window_width}Mbp is too large. '
                          'Did you enter a value in bp instead of Mbp?')
+    
     if (args.move_step is not None) + (args.round_to is not None) != 1:
         raise ValueError(f'Use exactly one of -s or -r')
     if args.move_step:
@@ -107,16 +113,16 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
                              'is too large. Did you enter a value in bp '
                              'instead of Mbp?')
     
-def locate_bams(dir: str, ext: str, min_samples: int) -> SAMPLE_BAMS:
+def locate_bams(bam_dir: str, bam_ext: str, min_samples: int) -> SAMPLE_BAMS:
     """Find BAM files within given directory.
 
     Assumes that files are named <sample_name>.<ext>
     
     Parameters
     ----------
-    dir : str
+    bam_dir : str
         Directory to search within.
-    ext : str
+    bam_ext : str
         File extension to search for.
     min_samples : int
         The minimum number of samples which should have BAM files.
@@ -127,20 +133,22 @@ def locate_bams(dir: str, ext: str, min_samples: int) -> SAMPLE_BAMS:
         BAM files found.
     """
 
-    bams = {file.split('.')[0]: f'{dir}/{file}'
-            for file in os.listdir(dir) if file.endswith(ext)}
+    # Find files given parameters
+    bams = {file.split('.')[0]: f'{bam_dir}/{file}'
+            for file in os.listdir(bam_dir) if file.endswith(bam_ext)}
+    # Verify file quantity
     if not bams:
-        raise FileNotFoundError(f'No {dir}/*.{ext}')
+        raise FileNotFoundError(f'No {bam_dir}/*.{bam_ext}')
     if min_samples > len(bams):
-        raise ValueError(f'Arguments imply at least {min_samples} sample(s), '
-                         f'but searching {dir}/*.{ext} found only {len(bams)}')
+        raise ValueError(f'At least {min_samples} sample(s) needed, but there '
+                         f'are only {len(bams)} {bam_dir}/*.{bam_ext} files')
     return bams
 
 def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
                         ref: str, alt: str) -> MATE_POS:
     """Get mate positions for reads supporting ref/alt alleles.
 
-    Ignores reads with unmapped mates and reads that do not cover the SNP.
+    Ignore reads with unmapped mates and reads that do not cover the SNP.
     BAM file must be position-sorted and indexed for fast random access.
 
     Parameters
@@ -150,7 +158,7 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
     chrom : str
         Chromosome of the SNP.
     pos : int
-        Position of the SNP in bp.
+        Position of the SNP in bp (0-indexed).
     ref : str
         Reference allele of the SNP.
     alt : str
@@ -165,17 +173,17 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
     ref_mates = []
     alt_mates = []
     with pysam.AlignmentFile(bam_path, 'rb') as bam_file:
-        for read in bam_file.fetch(chrom, pos - 1, pos):
-            # We want mate pairs with high-quality mapping to the same chr
+        for read in bam_file.fetch(chrom, pos, pos + 1):
+            # Only use mate pairs with high-quality mapping to the same chr
             if (read.is_secondary or read.mate_is_unmapped
                 or read.reference_name != read.next_reference_name):
                 continue
             
             ref_positions = read.get_reference_positions(full_length=True)
             # Handle deletions of the SNP position
-            if pos - 1 not in ref_positions: continue
+            if pos not in ref_positions: continue
             
-            base = read.query_sequence[ref_positions.index(pos - 1)]
+            base = read.query_sequence[ref_positions.index(pos)]
             if base == ref:
                 ref_mates.append(read.next_reference_start)
             elif base == alt:
@@ -184,10 +192,9 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
     return {'ref': sorted(ref_mates), 'alt': sorted(alt_mates)}
 
 def count_biased_samples(all_mates: Dict[str, MATE_POS], 
-                         all_ptrs: Dict[str, Dict[str, Dict[str, int]]],
+                         all_ptrs: Dict[str, PTR_POS],
                          cur_start: int, cur_end: int
-                         ) -> Tuple[Dict[str, Dict[str, Dict[str, int]]], 
-                                    Dict[str, int]]:
+                         ) -> Tuple[Dict[str, PTR_POS], Dict[str, int]]:
     """Count samples with read mate allele bias within a window.
     
     Assumes that all_mates is sorted, and that using
@@ -198,8 +205,8 @@ def count_biased_samples(all_mates: Dict[str, MATE_POS],
     ----------
     all_mates : Dict[str, MATE_POS]
         `{sample_name: mate positions}` dictionary.
-    all_ptrs : Dict[str, Dict[str, Dict[str, int]]]
-        `{sample_name: {start/end: {ref/alt: index}}}` dictionary.
+    all_ptrs : Dict[str, PTR_POS]
+        `{sample_name: pointer positions}` dictionary.
     cur_start : int
         Starting position of the window in bp, 0-indexed.
     cur_end : int
@@ -207,7 +214,7 @@ def count_biased_samples(all_mates: Dict[str, MATE_POS],
 
     Returns
     -------
-    all_ptrs : Dict[str, Dict[str, Dict[str, int]]]
+    all_ptrs : Dict[str, PTR_POS]
         Updated pointer dictionary.
     bias_counts : Dict[str, int]
         Number of samples with ref, alt, or neutral bias.
@@ -226,12 +233,15 @@ def count_biased_samples(all_mates: Dict[str, MATE_POS],
                     i += 1
                 ptrs[side][allele] = i
 
+        # Read count within the window is just pointer distances
         ref_count = ptrs['end']['ref'] - ptrs['start']['ref']
         alt_count = ptrs['end']['alt'] - ptrs['start']['alt']
 
+        # Update cross-sample trackers
         if ref_count > alt_count: bias_counts['ref'] += 1
         elif alt_count > ref_count: bias_counts['alt'] += 1
         else: bias_counts['neutral'] += 1
+
     return all_ptrs, bias_counts
 
 def adjust_biased_segments(biased_segments: List[Tuple[int, int, str]],
@@ -307,6 +317,7 @@ def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
     max_neutral_num = max_neutral * len(all_mates)
 
     biased_segments = []
+    # All pointers start at the beginning of the list
     all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
                          'end': {'ref': 0, 'alt': 0}}
                          for sample in all_mates.keys()}
@@ -314,20 +325,21 @@ def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
     for cur_start in window_starts:
         cur_end = cur_start + window_width
 
-        all_ptrs, bias_counts = count_biased_samples(all_mates, all_ptrs, 
-                                                     cur_start, cur_end)
+        # Count bias within this segment
+        all_ptrs, bias_counts = count_biased_samples(
+            all_mates, all_ptrs, cur_start, cur_end)
+        
+        # Determine whether/how to use this sgement in biased_segments
         biased_segments = adjust_biased_segments(
             biased_segments, bias_counts, max_opposite_num, 
             max_neutral_num, cur_start, cur_end)
     
-    return [(start, end, bias) 
-            for start, end, bias in biased_segments]
+    return biased_segments
 
 def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
                         biased_segments: List[Tuple[int, int, str]]
                         ) -> List[SEGMENT]:
-    """
-    Calculates binomial test p-values for allele-biased segments.
+    """Calculate binomial test p-values for allele-biased segments.
 
     Parameters
     ----------
@@ -341,9 +353,10 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
     List[SEGMENT]
         List of biased segments, formatted as `(start, end, bias, p-value)`.
     """
+
     results = []
 
-    # Initialize pointers for efficient counting
+    # All pointers start at the beginning of the list
     all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
                          'end': {'ref': 0, 'alt': 0}}
                          for sample in all_mates.keys()}
@@ -364,7 +377,7 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
                         i += 1
                     ptrs[side][allele] = i
 
-            # Count ref/alt reads in the segment for this sample
+            # Read count within the window is just pointer distances
             ref_count = ptrs["end"]["ref"] - ptrs["start"]["ref"]
             alt_count = ptrs["end"]["alt"] - ptrs["start"]["alt"]
 
@@ -376,14 +389,12 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
                 sample_counts.append(("alt", ref_count, alt_count))
                 alt_total += 1
 
-        # Ignore neutral samples and test the observed bias using a binomial test
-        if ref_total + alt_total > 0:
-            # Number of samples in the majority bias group
-            k = max(ref_total, alt_total)  
-            n = ref_total + alt_total
-            p_value = binomtest(k, n, p=0.5, alternative="two-sided").pvalue
+        # Binomial test for this many samples having consistent bias
+        k = max(ref_total, alt_total)  
+        n = ref_total + alt_total
+        p_value = binomtest(k, n, p=0.5, alternative="two-sided").pvalue
 
-            results.append((start, end, bias, p_value))
+        results.append((start, end, bias, p_value))
 
     return results
 
@@ -422,11 +433,15 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
         Biased segments found.
     """
 
-    # Skip SNPs which failed filtration or have >2 alleles
-    if not record.filter or len(record.alts) > 2: return []
+    # Only use high-quality biallelic variants
+    if not record.filter or len(record.alts) != 1: return []
 
-    chrom, snp_pos = record.chrom, record.pos
-    ref, alt = record.ref, record.alts[0]
+    chrom, ref, alt = record.chrom, record.ref, record.alts[0]
+    # Convert from 1-index VCF to 0-indexed BAM
+    snp_pos = record.pos - 1
+
+    # Only use SNPs
+    if len(ref) > 1 or len(alt) > 1: return []
 
     # Only use heterozygous genotypes
     is_het = {name: s['GT'][0] != s['GT'][1]
@@ -435,15 +450,20 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
 
     mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
                 for sample, file in bams.items() if is_het[sample]}
-    
+
+    # Create lists of window starts for the chosen method
     if move_step is not None:
+        # Steps of move_step along chromosome
         window_starts = range(0, chr_length - window_width + 1, move_step)
     else:
         window_starts = set()
+
         for sample_mates in mates.values():
             for allele_mates in sample_mates.values():
                 for pos in allele_mates:
+                    # Round mate position with round_to precision
                     window_starts.add(round(pos / round_to) * round_to)
+        # Convert to sorted list
         window_starts = sorted(window_starts)
 
     window_starts = [pos for pos in window_starts if 

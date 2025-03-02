@@ -13,6 +13,7 @@ Heavily based on code written by ChatGPT.
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
+import math  # Floor operation
 import os  # File operations
 import pysam  # Reading BAMs and VCF
 from scipy.stats import binomtest # Test significance of each biased site
@@ -71,11 +72,11 @@ def parse_arguments() -> argparse.Namespace:
                                   '(Consecutive windows are merged)')
     window_args.add_argument('-s', '--move-step', metavar='Mbp',
                              required=False, default=None, type=float, 
-                             help='Mbp step size, in Mbp. Use one of -s or -r')
-    window_args.add_argument('-r', '--round-to', metavar='Mbp',
+                             help='Mbp step size, in Mbp. Use one of -s or -f')
+    window_args.add_argument('-f', '--floor-to', metavar='Mbp',
                              required=False, default=None, type=float,
-                             help='Mbp to round read positions to in empirical '
-                                  'window choice. Use one of -s or -r')
+                             help='Mbp to floor read positions to in empirical '
+                                  'window choice. Use one of -s or -f')
     return parser.parse_args()
 
 def check_illogical_arguments(args: argparse.Namespace) -> None:
@@ -103,8 +104,8 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         raise ValueError(f'Window width {args.window_width}Mbp is too large. '
                          'Did you enter a value in bp instead of Mbp?')
     
-    if (args.move_step is not None) + (args.round_to is not None) != 1:
-        raise ValueError(f'Use exactly one of -s or -r')
+    if (args.move_step is not None) + (args.floor_to is not None) != 1:
+        raise ValueError(f'Use exactly one of -s or -f')
     if args.move_step:
         if args.move_step <= 0.5:
             raise ValueError(f'Window step {args.move_step}Mbp '
@@ -112,12 +113,12 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
         if args.move_step >= 10:
             raise ValueError(f'Window step {args.move_step}Mbp is too large. '
                              'Did you enter a vaue in bp instead of Mbp?')
-    if args.round_to:
-        if args.round_to <= 0.1:
-            raise ValueError(f'Read rounding threshould {args.round_to}Mbp'
+    if args.floor_to:
+        if args.floor_to <= 0.1:
+            raise ValueError(f'Read floor threshould {args.floor_to}Mbp'
                              ' must be >=0.1Mbp.')
-        if args.round_to >= 10:
-            raise ValueError(f'Read rounding threshold {args.round_to}Mbp '
+        if args.floor_to >= 10:
+            raise ValueError(f'Read floor threshold {args.floor_to}Mbp '
                              'is too large. Did you enter a value in bp '
                              'instead of Mbp?')
     
@@ -409,7 +410,7 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
 def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
                  max_drop: int, record: pysam.VariantRecord, chr_length: int,
                  window_width: int, move_step: int = None,
-                 round_to: int = None) -> List[SEGMENT]:
+                 floor_to: int = None) -> List[SEGMENT]:
     """Run mate allele biased segment detection pipeline for a variant.
     
     Parameters
@@ -431,7 +432,7 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     move_step : int [ default None ]
         Window step, in bp, to use during scanning.
         If None, then read rounding will be used.
-    round_to : int [ default None ]
+    floor_to : int [ default None ]
         What to round read positions to, in Mbp, for window start.
         If None, then window step will be used.
 
@@ -469,8 +470,8 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
         for sample_mates in mates.values():
             for allele_mates in sample_mates.values():
                 for pos in allele_mates:
-                    # Round mate position with round_to precision
-                    window_starts.add(round(pos / round_to) * round_to)
+                    # Floor mate position with floor_to precision
+                    window_starts.add(math.floor(pos / floor_to) * floor_to)
         # Convert to sorted list
         window_starts = sorted(window_starts)
 
@@ -493,7 +494,7 @@ if __name__ == '__main__':
     # Convert window arguments to bp whole numbers
     window_width = int(args.window_width * MBP)
     move_step = None if args.move_step is None else int(args.move_step * MBP)
-    round_to = None if args.round_to is None else int(args.round_to * MBP)
+    floor_to = None if args.floor_to is None else int(args.floor_to * MBP)
     
     # Main logic
     with open(args.output, 'w', newline='') as csvfile:
@@ -519,7 +520,7 @@ if __name__ == '__main__':
                 biased_segments = run_pipeline(
                     bams, args.max_opposite, args.max_neutral,
                     args.max_drop, record, chr_length, 
-                    window_width, move_step, round_to)
+                    window_width, move_step, floor_to)
                 
                 if biased_segments is None: variants_dropped += 1
                 else:

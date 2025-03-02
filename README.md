@@ -240,13 +240,13 @@ are more abundant than the other.
         (e.g. 1Mbp vs. 5Mbp in the examples) while minimizing the number of
         windows tested. Not all distal windows may have reads to test.
 
-        > [!TIP]
-        > Whether `--floor-to` is useful depends on **the number of mates**. It
-        > tests the same windows as `--move-step`, skipping those with no reads.
-        > To determine which windows to use, it processes all reads *twice*,
-        > compared to `--move-step`'s once. If all such windows have at least
-        > one mate (due to high pooled-sample coverage), then `--move-step` will
-        > be more efficient.
+> [!TIP]
+> Whether `--floor-to` is useful depends on **the number of mates**. It
+> tests the same windows as `--move-step`, skipping those with no reads.
+> To determine which windows to use, it processes all reads *twice*,
+> compared to `--move-step`'s once. If all such windows have at least
+> one mate (due to high pooled-sample coverage), then `--move-step` will
+> be more efficient.
     * This portion of the algorithm uses pointers to indices in the sorted lists
     of mate positions, and thus will only traverse each list once per variant.
 5. Determine whether this window is biased by **counting** ref-biased samples,
@@ -258,12 +258,12 @@ alt-biased samples, and neutral (identical mate count for both alleles) samples.
     * If more than `--max-neutral` share of the samples have a neutral bias,
     drop this window.
 
-    > [!WARNING]
-    > Unlike `--max-drop`, an integer absolute number of samples which may be
-    > dropped, both `--max-opposite` and `--max-neutral` are **decimal shares**
-    > of the total number of heterozygotes. If there are 20 total samples, but
-    > two of them were dropped due to a homozygous genotype, then the number
-    > which may have a neutral bias is `(20 - 2) × --max-neutral`.
+> [!WARNING]
+> Unlike `--max-drop`, an integer absolute number of samples which may be
+> dropped, both `--max-opposite` and `--max-neutral` are **decimal shares**
+> of the total number of heterozygotes. If there are 20 total samples, but
+> two of them were dropped due to a homozygous genotype, then the number
+> which may have a neutral bias is `(20 - 2) × --max-neutral`.
 6. Assuming this window wasn't dropped, add it to the list. If it overlaps or is
 adjacent to the previous window (e.g. 25-40Mbp and 30-45Mbp), **merge** them.
 7. After all windows are processed (and adjacent/overlapping ones merged),

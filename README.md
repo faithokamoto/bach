@@ -40,7 +40,7 @@ conda env create --file environment.yml
 conda activate bach
 ```
 
-## Test data
+## Examples/tests
 
 To run `bach` on the provided test data, use 
 ```
@@ -49,8 +49,8 @@ To run `bach` on the provided test data, use
     -v test/snps.vcf -d test/bams -o using_step.csv
 
 ./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 15 --round-to 5 \
-    -v test/snps.vcf -d test/bams -o using_round.csv
+    --window-width 15 --floor-to 1 \
+    -v test/snps.vcf -d test/bams -o using_floor.csv
 ```
 
 The output files should correspond to the ones in `test`

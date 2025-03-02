@@ -37,7 +37,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Find allele-biased segments. '
                                      'Compare mates of reads with SNP alleles.')
     
-    parser.add_argument('-p', '--print-progress', metavar='#',
+    parser.add_argument('-p', '--progress', metavar='#',
                         required=False, default=None, type=float,
                         help='Progress update frequency (# variants processed)')
     
@@ -81,7 +81,7 @@ def parse_arguments() -> argparse.Namespace:
 
 def check_illogical_arguments(args: argparse.Namespace) -> None:
     """Run initial argument validity checks."""
-    if args.print_progress is not None and args.print_progress <= 0:
+    if args.progress is not None and args.progress <= 0:
         raise ValueError(f'Progress print frequency must be positive')
     
     if not os.path.isfile(args.vcf):
@@ -531,8 +531,8 @@ if __name__ == '__main__':
                         writer.writerow([record.pos, record.id, record.chrom,
                                         int(start/MBP), int(end/MBP), bias, p])
                 
-                if (args.print_progress is not None 
-                    and total_variants % args.print_progress == 0):
+                if (args.progress is not None 
+                    and total_variants % args.progress == 0):
                     print(f'{total_variants} variants processed: '
                           f'{total_variants - variants_dropped} tested, '
                           f'{variants_dropped} dropped')

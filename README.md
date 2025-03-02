@@ -1,5 +1,4 @@
-# bach
-Biased Allele Contacts in Hi-C
+# `bach`: Biased Allele Contacts in Hi-C
 
 BME 230A class project, heavily based on a [rotation project][ProjectSummary]
 performed in [Dr. Richard "Ed" Green's lab][PGL] with Dr. Merly Escalona.
@@ -33,8 +32,7 @@ Test by:
 > Versions before `1.10.0` lack `scipy.stats.binomtest`. They instead use
 > `scipy.stats.binom_test`, which has since been [deprecated][Deprecation].
 
-Alternatively, if you have [conda][CondaInstall], simply run this from inside of
-the `bach` directory:
+Alternatively, run [conda][CondaInstall] from inside of the `bach` directory:
 ```
 conda env create --file environment.yml
 conda activate bach
@@ -74,8 +72,7 @@ Find allele-biased segments. Compare mates of reads with SNP alleles.
 
 options:
   -h, --help            show this help message and exit
-  -p #, --print-progress #
-                        Progress update frequency (# variants processed)
+  -p #, --progress #    Progress update frequency (# variants processed)
 
 filepaths:
   -v VCF, --vcf VCF     Path to the SNP VCF
@@ -101,10 +98,10 @@ window parameters:
                         Window width, in Mbp, to scan with (Consecutive windows
                         are merged)
   -s Mbp, --move-step Mbp
-                        Mbp step size, in Mbp. Use one of -s or -r
-  -r Mbp, --round-to Mbp
-                        Mbp to round read positions to in empirical window
-                        choice. Use one of -s or -r
+                        Mbp step size, in Mbp. Use one of -s or -f
+  -f Mbp, --floor-to Mbp
+                        Mbp to floor read positions to in empirical window
+                        choice. Use one of -s or -f
 ```
 
 ### Workflow

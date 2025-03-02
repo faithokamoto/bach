@@ -134,7 +134,7 @@ samples with BAMs. Variants will be dropped from the VCF if they:
 
 ### Outputs
 
-The allele-biased segments (see [Algorithm][#algorithm]) are written to a CSV
+The allele-biased segments (see [Algorithm](#algorithm)) are written to a CSV
 (`--output`) with these columns:
 * `CHROM`: chromosome of SNP; VCF first column
 * `SNP_POS`: 1-indexed bp position of SNP; VCF second column

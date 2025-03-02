@@ -163,7 +163,7 @@ SNPs which had too few heterozygotes to test. `{F}` is the total number of
 biased segments found across all variants. 
 
 > [!TIP]
-> To also print a progress summary after every X variants processed, use
+> To also print a progress summary after every `X` variants processed, use
 > `--print-progress X`. This is useful to track/estimate time for large jobs.
 
 ### Problem formulation

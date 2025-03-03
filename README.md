@@ -51,6 +51,14 @@ To run `bach` on the provided test data, use
     -v test/snps.vcf -d test/bams -o using_floor.csv
 ```
 
+Both commands correspond to: "Using BAMs in `test/bams` and VCF `test/snps.vcf`,
+output biased segments to `using_X.csv`. At most one sample per SNP may be
+dropped/ignored due to a missing or homozygous genotype. No samples within a 
+biased window may have opposite or neutral bias. Use windows of 15Mbp." Their
+difference is in **how the window is moved**: the first uses steps of 5Mbp,
+while the other will round down each read mate position to a precision of 1Mbp.
+More algorithm details are in [Algorithm](#algorithm).
+
 The output files should correspond to the ones in `test`
 
 To generate new test data, use 

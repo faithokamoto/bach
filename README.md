@@ -180,8 +180,8 @@ The goal of `bach` is to find **allele-biased chromatin contacts**. These are
 defined as regions of a chromosome which preferentially contact one allele over
 another, as measured by Hi-C read mates. That is, given:
 * *n* samples
-* *O* ∈ [0, 0.5) maximum share of samples with opposite bias
-* *N* ∈ [0, 1) maximum share of samples with neutral bias
+* *O* ∈ [0, 0.5) maximum share of heterozygous samples with opposite bias
+* *N* ∈ [0, 1) maximum share of heterozygous samples with neutral bias
 * *D* ∈ [0, *n*) maximum number of samples which may be dropped
 * *G*<sub>*i*</sub> sample genotypes for ∀ *i* ∈ [1, *n*]
     * *k* ⊆ [1, *n*] where *i* ∈ *k* if *G*<sub>*i*</sub> is heterozygous

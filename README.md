@@ -197,9 +197,9 @@ Find all windows [*x*, *y*] (for *x* and *y* multiples of *p* and *y* − *x* �
     * *C*<sub>*A*</sub> = size( *M*<sub>*a*,*i*</sub> ∈ [*x*,*y*] ) for sample *i*
     * *C*<sub>*O*</sub> = size( *M*<sub>*~a*,*i*</sub> ∈ [*x*,*y*] ) for sample *i*
 * and thus sample bias counts:
-    * *B*<sub>*A*</sub> = Σ<sub>*i* ∈ *k*</sub> *C*<sub>*A*</sub> > *C*<sub>*O*</sub>
-    * *B*<sub>*O*</sub> = Σ<sub>*i* ∈ *k*</sub> *C*<sub>*A*</sub> < *C*<sub>*O*</sub>
-    * *B*<sub>*N*</sub> = Σ<sub>*i* ∈ *k*</sub> *C*<sub>*A*</sub> = *C*<sub>*O*</sub>
+    * *B*<sub>*A*</sub> = Σ<sub>*i* ∈ *k*</sub> ( *C*<sub>*A*</sub> > *C*<sub>*O*</sub> )
+    * *B*<sub>*O*</sub> = Σ<sub>*i* ∈ *k*</sub> ( *C*<sub>*A*</sub> < *C*<sub>*O*</sub> )
+    * *B*<sub>*N*</sub> = Σ<sub>*i* ∈ *k*</sub> ( *C*<sub>*A*</sub> = *C*<sub>*O*</sub> )
 * the window is biased as so:
     * *B*<sub>*A*</sub> > *B*<sub>*O*</sub>
     * *B*<sub>*O*</sub> ≤ |*k*| × *O*

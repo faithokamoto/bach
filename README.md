@@ -248,6 +248,8 @@ are more abundant than the other.
         precision. This option may allow using a more precise window position
         (e.g. 1Mbp vs. 5Mbp in the examples) while minimizing the number of
         windows tested. Not all distal windows may have reads to test.
+    * This portion of the algorithm uses pointers to indices in the sorted lists
+    of mate positions, and thus will only traverse each list once per variant.
 
 > [!TIP]
 > Whether `--floor-to` is useful depends on **the number of mates**. It
@@ -256,9 +258,6 @@ are more abundant than the other.
 > compared to `--move-step`'s once. If all such windows have at least
 > one mate (due to high pooled-sample coverage), then `--move-step` will
 > be more efficient.
-
-    * This portion of the algorithm uses pointers to indices in the sorted lists
-    of mate positions, and thus will only traverse each list once per variant.
 5. Determine whether this window is biased by **counting** ref-biased samples,
 alt-biased samples, and neutral (identical mate count for both alleles) samples.
     * The overall bias of the window is either `ref` or `alt` based on which

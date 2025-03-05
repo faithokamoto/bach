@@ -256,6 +256,7 @@ are more abundant than the other.
 > compared to `--move-step`'s once. If all such windows have at least
 > one mate (due to high pooled-sample coverage), then `--move-step` will
 > be more efficient.
+
     * This portion of the algorithm uses pointers to indices in the sorted lists
     of mate positions, and thus will only traverse each list once per variant.
 5. Determine whether this window is biased by **counting** ref-biased samples,

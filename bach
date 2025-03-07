@@ -107,14 +107,14 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
     if (args.move_step is not None) + (args.floor_to is not None) != 1:
         raise ValueError(f'Use exactly one of -s or -f')
     if args.move_step:
-        if args.move_step <= 0.5:
+        if args.move_step < 0.5:
             raise ValueError(f'Window step {args.move_step}Mbp '
                              'must be >=0.5Mbp.')
         if args.move_step >= 10:
             raise ValueError(f'Window step {args.move_step}Mbp is too large. '
                              'Did you enter a vaue in bp instead of Mbp?')
     if args.floor_to:
-        if args.floor_to <= 0.1:
+        if args.floor_to < 0.1:
             raise ValueError(f'Read floor threshould {args.floor_to}Mbp'
                              ' must be >=0.1Mbp.')
         if args.floor_to >= 10:
@@ -489,7 +489,7 @@ if __name__ == '__main__':
     check_illogical_arguments(args)
     # At least one more than max_drop samples are needed for worst-case analysis
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
-    print(f'{len(bams)} found in {args.bam_dir}/<sample>{args.bam_ext}')
+    print(f'{len(bams)} BAMs found in {args.bam_dir}/<sample>{args.bam_ext}')
 
     # Convert window arguments to bp whole numbers
     window_width = int(args.window_width * MBP)

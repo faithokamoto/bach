@@ -13,6 +13,7 @@ Heavily based on code written by ChatGPT.
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
+import copy # Deep copy of dictionary
 import math  # Floor operation
 import os  # File operations
 import pysam  # Reading BAMs and VCF
@@ -271,7 +272,7 @@ def count_biased_samples(all_mates: Dict[str, MATE_POS],
     for sample in all_mates.keys():
         mates = all_mates[sample]
         ptrs = all_ptrs[sample]
-        adjust_pointers(mates, ptrs, start, end)
+        ptrs = adjust_pointers(mates, ptrs, start, end)
 
         # Read count within the window is just pointer distances
         ref_count = ptrs['end']['ref'] - ptrs['start']['ref']
@@ -284,50 +285,33 @@ def count_biased_samples(all_mates: Dict[str, MATE_POS],
 
     return all_ptrs, bias_counts
 
-def adjust_biased_segments(biased_segments: List[Tuple[int, int, str]],
-                           bias_counts: Dict[str, int], max_opposite_num: float,
-                           max_neutral_num: float, cur_start: int, cur_end: int
-                           ) -> List[Tuple[int, int, str]]:
-    """Adjust/add the latest biased segment to the list.
-
-    If this segment has bias, and is overlapping/consecutive with
-    a previous segment, they are merged. Otherwise new biased
-    segments are added to the end of the list.
+def bias_type(bias_counts: Dict[str, int], max_opposite_num: float,
+              max_neutral_num: float) -> str:
+    """Determine if these bias counts indicate overall bias.
     
     Parameters
     ----------
-    biased_segments : List[Tuple[int, int, str]]
-        Segments with bias so far, as `(start, end, bias)`.
     bias_counts : Dict[str, int] 
         Number of samples with ref, alt, or neutral bias.
     max_opposite_num : float
         Maximum # of samples with opposite bias.
     max_neutral_num : float
         Maximum # of samples with neutral bias.
-    cur_start : int
-        Starting position of the window in bp, 0-indexed.
-    cur_end : int
-        Ending position of the window in bp, 0-indexed.
-    
+
     Returns
     -------
-    List[Tuple[int, int, str]]
-        Updated list of biased segments.
+    str
+        The kind of bias ('ref', 'alt', or 'neutral')
     """
-
     if (min(bias_counts['ref'], bias_counts['alt']) <= max_opposite_num
         and bias_counts['neutral'] <= max_neutral_num):
-        bias = 'ref' if bias_counts['ref'] > bias_counts['alt'] else 'alt'
-        # Extend previous segment if adjacent/overlapping and same bias
-        if (biased_segments and biased_segments[-1][1] >= cur_start 
-            and biased_segments[-1][2] == bias):
-            biased_segments[-1] = (biased_segments[-1][0], cur_end, bias)
-        else: biased_segments.append((cur_start, cur_end, bias))
-    return biased_segments
+        return 'ref' if bias_counts['ref'] > bias_counts['alt'] else 'alt'
+    else: return 'neutral'
 
 def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
-                         window_starts: List[int], max_opposite: float,
-                         max_neutral: float) -> List[Tuple[int, int, str]]:
+                         window_starts: List[int], precision: int,
+                         max_opposite: float, max_neutral: float
+                         ) -> List[Tuple[int, int, str]]:
     """Scan for read mate allele-biased segments.
 
     Scans the chromosome in 5Mbp steps to identify segments
@@ -342,6 +326,8 @@ def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
         Window width, in bp, to use during scanning.
     window_starts : List[int]
         Starting locations for windows to test.
+    precision : int
+        Window precision (used for extending).
     max_opposite : float
         Maximum % of samples with opposite bias.
     max_neutral : float
@@ -353,8 +339,9 @@ def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
         List of biased segments, each as `(start, end, bias)`.
     """
 
-    max_opposite_num = max_opposite * len(all_mates)
-    max_neutral_num = max_neutral * len(all_mates)
+    # Convert to absolute numbers
+    max_opposite = max_opposite * len(all_mates)
+    max_neutral = max_neutral * len(all_mates)
 
     biased_segments = []
     # All pointers start at the beginning of the list
@@ -368,11 +355,24 @@ def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
         # Count bias within this segment
         all_ptrs, bias_counts = count_biased_samples(
             all_mates, all_ptrs, cur_start, cur_end)
+        bias = bias_type(bias_counts, max_opposite, max_neutral)
         
-        # Determine whether/how to use this sgement in biased_segments
-        biased_segments = adjust_biased_segments(
-            biased_segments, bias_counts, max_opposite_num, 
-            max_neutral_num, cur_start, cur_end)
+        if bias != 'neutral':
+            # Add this segment to biased_segments
+            biased_segments.append((cur_start, cur_end, bias))
+
+            # Attempt to extend
+            cur_ptrs = copy.deepcopy(all_ptrs)
+            while True:
+                # Count bias in a possible window extension
+                cur_ptrs, bias_counts = count_biased_samples(
+                    all_mates, cur_ptrs, cur_end, cur_end + precision)
+                
+                # Extend window if the extension has the same bias
+                if bias_type(bias_counts, max_opposite, max_neutral) == bias:
+                    biased_segments[-1] = (cur_start, cur_end + precision, bias)
+                    cur_end = cur_end + precision
+                else: break # Otherwise, this window cannot be exteneed
     
     return biased_segments
 
@@ -408,7 +408,7 @@ def add_binomial_pvalue(all_mates: Dict[str, MATE_POS],
         for sample in all_mates.keys():
             mates = all_mates[sample]
             ptrs = all_ptrs[sample]
-            prea = adjust_pointers(mates, ptrs, start, end)
+            ptrs = adjust_pointers(mates, ptrs, start, end)
 
             # Read count within the window is just pointer distances
             ref_count = ptrs["end"]["ref"] - ptrs["start"]["ref"]
@@ -486,9 +486,11 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
 
     # Create lists of window starts for the chosen method
     if move_step is not None:
+        precision = move_step
         # Steps of move_step along chromosome
         window_starts = range(0, chr_length - window_width + 1, move_step)
     else:
+        precision = floor_to
         window_starts = set()
 
         for sample_mates in mates.values():
@@ -503,8 +505,8 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
                     # Filter out windows which contain the SNP itself
                     not pos <= snp_pos <= pos + window_width]
     
-    biased_segments = find_biased_segments(
-        mates, window_width, window_starts, max_opposite, max_neutral)
+    biased_segments = find_biased_segments(mates, window_width, window_starts, 
+                                           precision, max_opposite, max_neutral)
     
     return add_binomial_pvalue(mates, biased_segments)
 

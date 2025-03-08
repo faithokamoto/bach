@@ -43,15 +43,15 @@ conda activate bach
 To run `bach` on the provided test data, use 
 ```
 ./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 15 --window-step 5 \
+    --window-width 3 --window-step 5 \
     -v test/snps.vcf -d test/bams -o output.csv
 ```
 
 This commands correspond to: "Using BAMs in `test/bams` and VCF `test/snps.vcf`,
 output biased segments to `output.csv`. At most one sample per SNP may be
 dropped/ignored due to a missing or homozygous genotype. No samples within a 
-biased window may have opposite or neutral bias. Use windows of 15Mbp with a
-step of 5Mbp." More algorithm details are in [Algorithm](#algorithm).
+biased window may have opposite or neutral bias. Use a step of 5Mbp and windows
+of width at least three steps." Algorithm details in [Algorithm](#algorithm).
 
 The output files should be the same as `test/output.csv`
 
@@ -179,7 +179,7 @@ another, as measured by Hi-C read mates. That is, given:
 * *M*<sub>*a*,*i*</sub> read mate sets for ∀ *i* ∈ [1, *n*] and for ∀ *a* ∈
 [ref, alt] for the positions of all mates of sample *i*'s reads with allele *a*
 * *p* window location precision
-* *w* minimum window width
+* *w* minimum window width, given that *w* is a multiple of *p*
 
 Find all windows [*x*, *y*] (for *x* and *y* multiples of *p* and *y* − *x* ≥
 *w*) on the variant's chromosome such that for some allele *a*:
@@ -226,16 +226,11 @@ The general idea of `bach`'s algorithm is to do the following *for each SNP*:
 `--max-drop` samples have homozygous or missing genotypes, then skip this SNP.
 2. Look up all reads overlapping the SNP. Save the locations of their **mates**
 in two lists, separated by the allele of the mate overlapping the SNP.
-3. Slide a **window** (width `--window-width`) across the SNP's chromosome.
+3. Count the number of mates in bins of `--window-step` width. Skip the bin that
+**overlaps the SNP** itself.
+4. Slide a **window** (width `--window-width`) as chunks of bins.
 4. For each window, determine *for each sample* whether mates of one allele
-are more abundant than the other.
-    * Windows which **overlap the SNP** itself are skipped.
-    * Window move in steps of `--move-step` Mbp, starting from 0, until the end
-    of the chromosome.
-    * This portion of the algorithm uses pointers to indices in the sorted lists
-    of mate positions, and thus will only traverse each list once per variant.
-5. Determine whether this window is biased by **counting** ref-biased samples,
-alt-biased samples, and neutral (identical mate count for both alleles) samples.
+are more abundant than the other. Sum across this window's bins by allele.
     * The overall bias of the window is either `ref` or `alt` based on which
     category has more biased samples.
     * If more than `--max-opposite` share of the samples have the opposite bias
@@ -250,13 +245,11 @@ alt-biased samples, and neutral (identical mate count for both alleles) samples.
 > two of them were dropped due to a homozygous genotype, then the number
 > which may have a neutral bias is `(20 - 2) × --max-neutral`.
 6. Assuming this window wasn't dropped:
-    1. Attempt to extend it by `p`. That is, check a mini-window of length `p`
-    starting from the end of the current window. If the extension has the same
-    bias, add it to the window. Repeat until extension is no longer possible.
-    2. Calculate a **two-tailed [binomial][BinomTest] p-value**, with `n` as the
-    total number of samples with either `ref` or `alt` bias (i.e. ignoring
-    neutral samples), `k` as the number of samples with majority bias, and `p`
-    as `0.5` (i.e. with the null hypothesis that either bias is equally likely).
+    * Attempt to extend it by one more bin. If the extension has the same bias,
+    add it to the window. Repeat until extension is no longer possible.
+    * Calculate a **two-tailed [binomial][BinomTest] p-value**, given `n`
+    samples with non-neutral bias, `k` samples with majority bias, and `p` as
+    `0.5` (null hypothesis that either bias is equally likely).
 
 > [!NOTE]
 > Some windows may overlap. For example, given a step size of 5Mbp and a minimum

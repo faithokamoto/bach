@@ -24,8 +24,8 @@ SAMPLE_BAMS = Dict[str, str]
 """Dictionary of {sample name: BAM file name} lookups."""
 MATE_POS = Dict[str, List[int]]
 """Dictionary of {ref/alt: [bp mate positions]} for a given sample."""
-PTR_POS = Dict[str, Dict[str, int]]
-"""Dictionary of {start/end: {ref/alt: index}} pointers for a given sample."""
+BIN_COUNTS = Dict[str, List[int]]
+"""Dictionary of {ref/alt: [counts of mates in bins]} for a given sample."""
 SEGMENT = Tuple[int, int, str, float]
 """Biased segment formatted as `(start, end, bias, p-value)`"""
 
@@ -67,10 +67,10 @@ def parse_arguments() -> argparse.Namespace:
     
     # Window arguments
     window_args = parser.add_argument_group('window parameters')
-    window_args.add_argument('-w', '--window-width', metavar='Mbp', type=float,
-                             help='Minimum window width, in Mbp, to scan with')
     window_args.add_argument('-s', '--window-step', metavar='Mbp', type=float, 
                              help='Window step size, in Mbp')
+    window_args.add_argument('-w', '--window-width', metavar='#', type=int,
+                             help='Minimum window width, as a number of steps')
     
     return parser.parse_args()
 
@@ -94,10 +94,8 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
                          'must be in [0, 1)')
     
     if args.window_width < 1:
-        raise ValueError(f'Window width {args.window_width}Mbp must be >=1Mbp')
-    if args.window_width >= 50:
-        raise ValueError(f'Window width {args.window_width}Mbp is too large. '
-                         'Did you enter a value in bp instead of Mbp?')
+        raise ValueError(f'Minimum window width {args.window_width} '
+                         'must be at least 1 step')
     
     if args.window_step < 0.5:
         raise ValueError(f'Window step {args.window_step}Mbp must be >=0.5Mbp.')
@@ -183,101 +181,56 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
     
     return {'ref': sorted(ref_mates), 'alt': sorted(alt_mates)}
 
-def adjust_pointers(mates: MATE_POS, ptrs: PTR_POS,
-                    start: int, end: int) -> PTR_POS:
-    """Adjust pointers to point to reads in a window
-    
-    Assumes that all_mates is sorted, and that using
-    all_ptrs to index into it would return reads <=
-    the given endpoints, respectively.
-
-    Parameters
-    ----------
-    mates : MATE_POS
-        Positions of read mates.
-    ptrs : PTR_POS
-        Current pointers.
-    start : int
-        Starting position of the window in bp, 0-indexed.
-    end : int
-        Ending position of the window in bp, 0-indexed.
-
-    Returns
-    -------
-    PTR_POS
-        Updated pointer dictionary.
-    """
-
-    for allele in ['ref', 'alt']:
-        i = ptrs['start'][allele]
-        # Stop once pointer is past "start"
-        while i < len(mates[allele]) and mates[allele][i] < start:
-            i += 1
-        ptrs['start'][allele] = i
-
-        i = ptrs['end'][allele]
-        # Stop before pointer is past "end"
-        while i < len(mates[allele]) -1 and mates[allele][i + 1] < end:
-            i += 1
-        ptrs['end'][allele] = i
-    return ptrs
-
-def count_biased_samples(all_mates: Dict[str, MATE_POS], 
-                         all_ptrs: Dict[str, PTR_POS], start: int, end: int
-                         ) -> Tuple[Dict[str, PTR_POS], Dict[str, int]]:
+def count_biased_samples(bin_counts: Dict[str, BIN_COUNTS], start: int,
+                         end: int) -> Tuple[int, int, int]:
     """Count samples with read mate allele bias within a window.
     
-    Assumes that all_mates is sorted, and that using
-    all_ptrs to index into it would return reads <=
-    the given endpoints, respectively.
-
     Parameters
     ----------
-    all_mates : Dict[str, MATE_POS]
-        `{sample_name: mate positions}` dictionary.
-    all_ptrs : Dict[str, PTR_POS]
-        `{sample_name: pointer positions}` dictionary.
+    bin_counts : Dict[str, BIN_COUNTS]
+        Counts of mates in bins, by sample.
     start : int
-        Starting position of the window in bp, 0-indexed.
+        Starting bin index.
     end : int
-        Ending position of the window in bp, 0-indexed.
+        Ending bin index.
 
     Returns
     -------
-    all_ptrs : Dict[str, PTR_POS]
-        Updated pointer dictionary.
-    bias_counts : Dict[str, int]
-        Number of samples with ref, alt, or neutral bias.
+    ref_count : int
+        Number of samples favoring the reference allele.
+    alt_count : int
+        Number of samples favoring the alternate allele.
+    neutral_count : int
+        Number of samples with no allele bias.
     """
 
-    bias_counts = {'ref': 0, 'alt': 0, 'neutral': 0}
-    for sample in all_mates.keys():
-        mates = all_mates[sample]
-        ptrs = all_ptrs[sample]
-        ptrs = adjust_pointers(mates, ptrs, start, end)
+    ref_count, alt_count, neutral_count = 0, 0, 0
 
-        # Read count within the window is just pointer distances
-        ref_count = ptrs['end']['ref'] - ptrs['start']['ref']
-        alt_count = ptrs['end']['alt'] - ptrs['start']['alt']
+    for sample in bin_counts:
+        ref_sum = sum(bin_counts[sample]['ref'][start:end])
+        alt_sum = sum(bin_counts[sample]['alt'][start:end])
 
-        # Update cross-sample trackers
-        if ref_count > alt_count: bias_counts['ref'] += 1
-        elif alt_count > ref_count: bias_counts['alt'] += 1
-        else: bias_counts['neutral'] += 1
+        if ref_sum > alt_sum: ref_count += 1
+        elif alt_sum > ref_sum: alt_count += 1
+        else: neutral_count += 1
 
-    return all_ptrs, bias_counts
+    return ref_count, alt_count, neutral_count
 
-def bias_type(bias_counts: Dict[str, int], max_opposite_num: float,
-              max_neutral_num: float) -> str:
+def bias_type(ref_count: int, alt_count: int, neutral_count: int,
+              max_opposite: float, max_neutral: float) -> str:
     """Determine if these bias counts indicate overall bias.
     
     Parameters
     ----------
-    bias_counts : Dict[str, int] 
-        Number of samples with ref, alt, or neutral bias.
-    max_opposite_num : float
+    ref_count : int
+        Number of samples favoring the reference allele.
+    alt_count : int
+        Number of samples favoring the alternate allele.
+    neutral_count : int
+        Number of samples with no allele bias.
+    max_opposite : float
         Maximum # of samples with opposite bias.
-    max_neutral_num : float
+    max_neutral : float
         Maximum # of samples with neutral bias.
 
     Returns
@@ -285,88 +238,96 @@ def bias_type(bias_counts: Dict[str, int], max_opposite_num: float,
     str
         The kind of bias ('ref', 'alt', or 'neutral')
     """
-    if (min(bias_counts['ref'], bias_counts['alt']) <= max_opposite_num
-        and bias_counts['neutral'] <= max_neutral_num):
-        return 'ref' if bias_counts['ref'] > bias_counts['alt'] else 'alt'
-    else: return 'neutral'
 
-def find_biased_segments(all_mates: Dict[str, MATE_POS], window_width: int,
-                         window_step: int, max_pos: int, ignore_pos: int,
-                         max_opposite: float, max_neutral: float
-                         ) -> List[SEGMENT]:
-    """Scan for read mate allele-biased segments.
+    if neutral_count > max_neutral or min(ref_count, alt_count) > max_opposite:
+        return 'neutral'
+    else: return 'ref' if ref_count > alt_count else 'alt'
 
-    Scans the chromosome in 5Mbp steps to identify segments
-    with consistent allele bias across samples.
-    Excludes segments containing the SNP itself.
+def count_mates_in_bins(mates: MATE_POS, max_pos: int, ignore_pos: int,
+                        step: int) -> Dict[str, List[int]]:
+    """
+    Count mate positions by allele within bins for a given sample.
 
     Parameters
     ----------
-    all_mates : Dict[str, MATE_POS]
-        `{sample_name: mate positions}` dictionary.
-    window_width : int
-        Window width, in bp, to use during scanning.
-    window_step : int
-        Window step, in bp.
+    mates : MATE_POS
+        This sample's mates
     max_pos : int
-        Maximum position to scan.
+        The maximum position to consider.
     ignore_pos : int
-        Position to ignore (drop windows containing it).
-    max_opposite : float
-        Maximum % of samples with opposite bias.
-    max_neutral : float
-        Maximum % of samples without bias.
+        Position to ignore (set windows containing it to 0).
+    step : int
+        The bin size.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping sample names to lists of counts per bin.
+    """
+    bins = list(range(0, max_pos, step))
+    bad_bin = (ignore_pos // step, ignore_pos // step + step)
+    bin_counts = {sample: [0] * len(bins) for sample in mates}
+    
+    for sample, positions in mates.items():
+        bin_idx = 0
+        for pos in positions:
+            if bad_bin[0] <= pos <= bad_bin[1]: continue # Skip this read
+
+            while bin_idx < len(bins) - 1 and pos >= bins[bin_idx + 1]:
+                bin_idx += 1
+            bin_counts[sample][bin_idx] += 1
+    
+    return bin_counts
+
+def find_biased_windows(bin_counts: Dict[str, BIN_COUNTS], window_width: int,
+                        step: int, max_opposite: int, max_neutral: int
+                        ) -> List[SEGMENT]:
+    """Count samples with read mate allele bias within a window.
+
+    Parameters
+    ----------
+    bin_counts : Dict[str, BIN_COUNTS]
+        Counts of mates in bins, by sample.
+    window_width : int
+        Minimum number of bins to consider as a window.
+    step : int
+        The bin size.
+    max_opposite : int
+        Maximum number of samples with opposite bias.
+    max_neutral : int
+        Maximum number of neutral samples.
 
     Returns
     -------
     List[SEGMENT]
-        List of biased segments.
+        List of biased segments (start position, end position, bias direction, p-value).
     """
 
-    # Convert to absolute numbers
-    max_opposite = max_opposite * len(all_mates)
-    max_neutral = max_neutral * len(all_mates)
-
+    num_bins = len(next(iter(bin_counts.values()))['ref'])
     biased_segments = []
-    # All pointers start at the beginning of the list
-    all_ptrs = {sample: {'start': {'ref': 0, 'alt': 0}, 
-                         'end': {'ref': 0, 'alt': 0}}
-                         for sample in all_mates.keys()}
-
-    for cur_start in range(0, max_pos - window_width + 1, window_step):
-        cur_end = cur_start + window_width
+    
+    for start in range(num_bins - window_width + 1):
+        end = start + window_width
+        ref, alt, neutral = count_biased_samples(bin_counts, start, end)
+        bias = bias_type(ref, alt, neutral, max_opposite, max_neutral)
         
-        # Skip windows with ignore_pos
-        if cur_start <= ignore_pos <= cur_end: continue
-
-        # Count bias within this segment
-        all_ptrs, bias_counts = count_biased_samples(
-            all_mates, all_ptrs, cur_start, cur_end)
-        bias = bias_type(bias_counts, max_opposite, max_neutral)
+        if bias == 'neutral':
+            continue
         
-        if bias != 'neutral':
-            # Attempt to extend
-            cur_ptrs = copy.deepcopy(all_ptrs)
-            while True:
-                # Count bias in a possible window extension
-                cur_ptrs, bias_counts = count_biased_samples(
-                    all_mates, cur_ptrs, cur_end, cur_end + window_step)
-                
-                # Extend window if the extension has the same bias
-                if bias_type(bias_counts, max_opposite, max_neutral) == bias:
-                    cur_end = cur_end + window_step
-                else: break # Otherwise, this window cannot be extended
+        while end < num_bins:
+            r, a, n = count_biased_samples(bin_counts, end, end + 1)
+            if bias_type(r, a, n, max_opposite, max_neutral) != bias:
+                break
+            ref += r
+            alt += a
+            neutral += n
+            end += 1
         
-            # Count again post-extension
-            _, bias_counts = count_biased_samples(
-                all_mates, all_ptrs, cur_start, cur_end)
-            
-            # Calculate p-value
-            k = max(bias_counts['ref'], bias_counts['alt'])  
-            n = bias_counts['ref'] + bias_counts['alt']
-            p_value = binomtest(k, n, p=0.5, alternative="two-sided").pvalue
-            
-            biased_segments.append((cur_start, cur_end, bias, p_value))
+        n = ref + alt
+        k = max(ref, alt)
+        p_value = binomtest(k, n, 0.5, alternative='two-sided').pvalue
+        
+        biased_segments.append((start * step, end * step, bias, p_value))
     
     return biased_segments
 
@@ -419,11 +380,18 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
               for name, s in record.samples.items()}
     if len(bams) - sum(is_het.values()) > max_drop: return None
 
-    mates = {sample: get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
-                for sample, file in bams.items() if is_het[sample]}
+    bin_counts = dict()
+    for sample, file in bams.items():
+        if is_het[sample]:
+            mates = get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
+            bin_counts[sample] = count_mates_in_bins(
+                mates, chr_length, snp_pos, window_step)
     
-    return find_biased_segments(mates, window_width, window_step, chr_length,
-                                snp_pos, max_opposite, max_neutral)
+    # Convert to absolute numbers
+    max_opposite_num = int(max_opposite * len(bin_counts))
+    max_neutral_num = int(max_neutral * len(bin_counts))
+    return find_biased_windows(bin_counts, window_width, window_step,
+                               max_opposite_num, max_neutral_num)
 
 if __name__ == '__main__':
     args = parse_arguments()
@@ -432,8 +400,7 @@ if __name__ == '__main__':
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
     print(f'{len(bams)} BAMs found in {args.bam_dir}/<sample>{args.bam_ext}')
 
-    # Convert window arguments to bp whole numbers
-    window_width = int(args.window_width * MBP)
+    # Convert step to bp whole number
     window_step = int(args.window_step * MBP)
 
     # Main logic
@@ -460,7 +427,7 @@ if __name__ == '__main__':
                 biased_segments = run_pipeline(
                     bams, args.max_opposite, args.max_neutral,
                     args.max_drop, record, chr_length, 
-                    window_width, window_step)
+                    args.window_width, window_step)
                 
                 if biased_segments is None: variants_dropped += 1
                 else:

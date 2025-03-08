@@ -13,7 +13,6 @@ Heavily based on code written by ChatGPT.
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
-import copy # Deep copy of dictionary
 import os  # File operations
 import pysam  # Reading BAMs and VCF
 from scipy.stats import binomtest # Test significance of each biased site

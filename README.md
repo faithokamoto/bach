@@ -258,6 +258,12 @@ alt-biased samples, and neutral (identical mate count for both alleles) samples.
     neutral samples), `k` as the number of samples with majority bias, and `p`
     as `0.5` (i.e. with the null hypothesis that either bias is equally likely).
 
+> [!NOTE]
+> Some windows may overlap. For example, given a step size of 5Mbp and a minimum
+> window width of 15Mbp, if a 10Mbp segment is biased, then multiple windows
+> will be called. Neither (unbiased 5Mbp, biased 10Mbp) or (biased 10Mbp,
+> unbiased 5Mbp) can be extended.
+
 [BinomTest]: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html
 [Beagan2020]: https://doi.org/10.1038/s41588-019-0561-1
 [Belton2012]: https://doi.org/10.1016/j.ymeth.2012.05.001

@@ -43,23 +43,17 @@ conda activate bach
 To run `bach` on the provided test data, use 
 ```
 ./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 15 --move-step 5 \
-    -v test/snps.vcf -d test/bams -o using_step.csv
-
-./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 15 --floor-to 1 \
-    -v test/snps.vcf -d test/bams -o using_floor.csv
+    --window-width 15 --window-step 5 \
+    -v test/snps.vcf -d test/bams -o output.csv
 ```
 
-Both commands correspond to: "Using BAMs in `test/bams` and VCF `test/snps.vcf`,
-output biased segments to `using_X.csv`. At most one sample per SNP may be
+This commands correspond to: "Using BAMs in `test/bams` and VCF `test/snps.vcf`,
+output biased segments to `output.csv`. At most one sample per SNP may be
 dropped/ignored due to a missing or homozygous genotype. No samples within a 
-biased window may have opposite or neutral bias. Use windows of 15Mbp." Their
-difference is in **how the window is moved**: the first uses steps of 5Mbp,
-while the other will round down each read mate position to a precision of 1Mbp.
-More algorithm details are in [Algorithm](#algorithm).
+biased window may have opposite or neutral bias. Use windows of 15Mbp with a
+step of 5Mbp." More algorithm details are in [Algorithm](#algorithm).
 
-The output files should correspond to the ones in `test`
+The output files should be the same as `test/output.csv`
 
 To generate new test data, use 
 ```
@@ -74,7 +68,7 @@ python scripts/simulate_reads.py --depth 30 \
 
 ```
 usage: bach [-h] [-p #] [-v VCF] [-d BAM_DIR] [-o OUTPUT] [-e .<ext>] [-O 0.*]
-            [-N 0.*] [-D #] [-w Mbp] [-s Mbp] [-r Mbp]
+            [-N 0.*] [-D #] [-w Mbp] [-s Mbp]
 
 Find allele-biased segments. Compare mates of reads with SNP alleles.
 
@@ -103,13 +97,9 @@ bias parameters:
 
 window parameters:
   -w Mbp, --window-width Mbp
-                        Window width, in Mbp, to scan with (Consecutive windows
-                        are merged)
-  -s Mbp, --move-step Mbp
-                        Mbp step size, in Mbp. Use one of -s or -f
-  -f Mbp, --floor-to Mbp
-                        Mbp to floor read positions to in empirical window
-                        choice. Use one of -s or -f
+                        Minimum window width, in Mbp, to scan with
+  -s Mbp, --window-step Mbp
+                        Window step size, in Mbp
 ```
 
 ### Background
@@ -240,24 +230,10 @@ in two lists, separated by the allele of the mate overlapping the SNP.
 4. For each window, determine *for each sample* whether mates of one allele
 are more abundant than the other.
     * Windows which **overlap the SNP** itself are skipped.
-    * Window starting positions are determined by one of two approaches:
-        1. **Steps** of `--move-step` Mbp, starting from 0, until the end of
-        the chromosome. This is the simpler option.
-        2. **Flooring** mate positions, i.e. taking all mates across all samples
-        and both alleles, and rounding their positions down to `--floor-to` Mbp
-        precision. This option may allow using a more precise window position
-        (e.g. 1Mbp vs. 5Mbp in the examples) while minimizing the number of
-        windows tested. Not all distal windows may have reads to test.
+    * Window move in steps of `--move-step` Mbp, starting from 0, until the end
+    of the chromosome.
     * This portion of the algorithm uses pointers to indices in the sorted lists
     of mate positions, and thus will only traverse each list once per variant.
-
-> [!TIP]
-> Whether `--floor-to` is useful depends on **the number of mates**. It
-> tests the same windows as `--move-step`, skipping those with no reads.
-> To determine which windows to use, it processes all reads *twice*,
-> compared to `--move-step`'s once. If all such windows have at least
-> one mate (due to high pooled-sample coverage), then `--move-step` will
-> be more efficient.
 5. Determine whether this window is biased by **counting** ref-biased samples,
 alt-biased samples, and neutral (identical mate count for both alleles) samples.
     * The overall bias of the window is either `ref` or `alt` based on which
@@ -273,13 +249,11 @@ alt-biased samples, and neutral (identical mate count for both alleles) samples.
 > of the total number of heterozygotes. If there are 20 total samples, but
 > two of them were dropped due to a homozygous genotype, then the number
 > which may have a neutral bias is `(20 - 2) × --max-neutral`.
-6. Assuming this window wasn't dropped, add it to the list. If it overlaps or is
-adjacent to the previous window (e.g. 25-40Mbp and 30-45Mbp), **merge** them.
-7. After all windows are processed (and adjacent/overlapping ones merged),
-determine the significance *for each window*:
-    * Count samples in each bias category again. This must be done at the end,
-    once the full, post-merge window width is known.
-    * Calculate a **two-tailed [binomial][BinomTest] p-value**, with `n` as the
+6. Assuming this window wasn't dropped:
+    1. Attempt to extend it by `p`. That is, check a mini-window of length `p`
+    starting from the end of the current window. If the extension has the same
+    bias, add it to the window. Repeat until extension is no longer possible.
+    2. Calculate a **two-tailed [binomial][BinomTest] p-value**, with `n` as the
     total number of samples with either `ref` or `alt` bias (i.e. ignoring
     neutral samples), `k` as the number of samples with majority bias, and `p`
     as `0.5` (i.e. with the null hypothesis that either bias is equally likely).

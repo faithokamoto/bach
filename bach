@@ -14,7 +14,6 @@ Heavily based on code written by ChatGPT.
 import argparse  # Command-line argument parsing
 import csv  # CSV output
 import copy # Deep copy of dictionary
-import math  # Floor operation
 import os  # File operations
 import pysam  # Reading BAMs and VCF
 from scipy.stats import binomtest # Test significance of each biased site
@@ -431,7 +430,7 @@ if __name__ == '__main__':
     check_illogical_arguments(args)
     # At least one more than max_drop samples are needed for worst-case analysis
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
-    print(f'{len(bams)} found in {args.bam_dir}/<sample>{args.bam_ext}')
+    print(f'{len(bams)} BAMs found in {args.bam_dir}/<sample>{args.bam_ext}')
 
     # Convert window arguments to bp whole numbers
     window_width = int(args.window_width * MBP)

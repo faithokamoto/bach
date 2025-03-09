@@ -299,34 +299,42 @@ def find_biased_windows(bin_counts: Dict[str, BIN_COUNTS], window_width: int,
     Returns
     -------
     List[SEGMENT]
-        List of biased segments (start position, end position, bias direction, p-value).
+        List of biased segments.
     """
 
     num_bins = len(next(iter(bin_counts.values()))['ref'])
     biased_segments = []
     
-    for start in range(num_bins - window_width + 1):
+    start = 0
+    while start < num_bins - window_width + 1:
         end = start + window_width
         ref, alt, neutral = count_biased_samples(bin_counts, start, end)
         bias = bias_type(ref, alt, neutral, max_opposite, max_neutral)
         
         if bias == 'neutral':
+            # Move on to the next window
+            start += 1
             continue
         
         while end < num_bins:
             r, a, n = count_biased_samples(bin_counts, end, end + 1)
             if bias_type(r, a, n, max_opposite, max_neutral) != bias:
                 break
+            # Extend window
+            end += 1
             ref += r
             alt += a
             neutral += n
-            end += 1
+            # Don't need to check this start again
+            start += 1
         
         n = ref + alt
         k = max(ref, alt)
         p_value = binomtest(k, n, 0.5, alternative='two-sided').pvalue
         
         biased_segments.append((start * step, end * step, bias, p_value))
+        # Move on to the next window
+        start += 1
     
     return biased_segments
 

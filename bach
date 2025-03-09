@@ -22,10 +22,6 @@ from typing import Dict, List, Tuple
 
 SAMPLE_BAMS = Dict[str, str]
 """Dictionary of {sample name: BAM file name} lookups."""
-MATE_POS = Dict[str, List[int]]
-"""Dictionary of {ref/alt: [bp mate positions]} for a given sample."""
-BIN_COUNTS = Dict[str, List[int]]
-"""Dictionary of {ref/alt: [counts of mates in bins]} for a given sample."""
 SEGMENT = Tuple[int, int, str, float]
 """Biased segment formatted as `(start, end, bias, p-value)`"""
 
@@ -134,9 +130,9 @@ def locate_bams(bam_dir: str, bam_ext: str, min_samples: int) -> SAMPLE_BAMS:
                          f'are only {len(bams)} {bam_dir}/*{bam_ext} files')
     return bams
 
-def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
-                        max_pos: int, step: int) -> BIN_COUNTS:
-    """Get mate positions for reads supporting ref/alt alleles.
+def count_mates_by_bin(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
+                       max_pos: int, step: int) -> List[int]:
+    """Count net ref mates in each bin.
 
     Ignore reads with unmapped mates and reads that do not cover the SNP.
     BAM file must be position-sorted and indexed for fast random access.
@@ -156,13 +152,12 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
 
     Returns
     -------
-    BIN_COUNTS
-        Counts of mates in specific bins.
+    List[int]
+        Net counts of mates in specific bins (ref - alt).
     """
 
-    num_bins = ceil(max_pos / step) + 1
     snp_bin = pos // step
-    bin_counts = {allele: [0] * num_bins for allele in ['ref', 'alt']}
+    bin_counts = [0] * (ceil(max_pos / step) + 1)
     with pysam.AlignmentFile(bam_path, 'rb') as bam_file:
         for read in bam_file.fetch(chrom, pos, pos + 1):
             # Only use mate pairs with high-quality mapping to the same chr
@@ -179,12 +174,12 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
             if pos not in ref_positions: continue
             
             base = read.query_sequence[ref_positions.index(pos)] 
-            if base == ref: bin_counts['ref'][mate_bin] += 1
-            elif base == alt: bin_counts['alt'][mate_bin] += 1
+            if base == ref: bin_counts[mate_bin] += 1
+            elif base == alt: bin_counts[mate_bin] -= 1
     
     return bin_counts
 
-def count_biased_samples(bin_counts: Dict[str, BIN_COUNTS], start: int,
+def count_biased_samples(bin_counts: Dict[str, List[int]], start: int,
                          end: int) -> Tuple[int, int, int]:
     """Count samples with read mate allele bias within a window.
     
@@ -210,11 +205,10 @@ def count_biased_samples(bin_counts: Dict[str, BIN_COUNTS], start: int,
     ref_count, alt_count, neutral_count = 0, 0, 0
 
     for sample in bin_counts:
-        ref_sum = sum(bin_counts[sample]['ref'][start:end])
-        alt_sum = sum(bin_counts[sample]['alt'][start:end])
+        net_ref = sum(bin_counts[sample][start:end])
 
-        if ref_sum > alt_sum: ref_count += 1
-        elif alt_sum > ref_sum: alt_count += 1
+        if net_ref > 0: ref_count += 1
+        elif net_ref < 0: alt_count += 1
         else: neutral_count += 1
 
     return ref_count, alt_count, neutral_count
@@ -246,7 +240,7 @@ def bias_type(ref_count: int, alt_count: int, neutral_count: int,
         return 'neutral'
     else: return 'ref' if ref_count > alt_count else 'alt'
 
-def find_biased_windows(bin_counts: Dict[str, BIN_COUNTS], window_width: int,
+def find_biased_windows(bin_counts: Dict[str, List[int]], window_width: int,
                         step: int, max_opposite: int, max_neutral: int
                         ) -> List[SEGMENT]:
     """Count samples with read mate allele bias within a window.
@@ -270,7 +264,7 @@ def find_biased_windows(bin_counts: Dict[str, BIN_COUNTS], window_width: int,
         List of biased segments.
     """
 
-    num_bins = len(next(iter(bin_counts.values()))['ref'])
+    num_bins = len(next(iter(bin_counts.values())))
     biased_segments = []
     
     start = 0
@@ -358,7 +352,7 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     bin_counts = dict()
     for sample, file in bams.items():
         if is_het[sample]:
-            bin_counts[sample] = get_allele_mate_pos(
+            bin_counts[sample] = count_mates_by_bin(
                 file, chrom, snp_pos, ref, alt, chr_length, window_step)
     
     # Convert to absolute numbers

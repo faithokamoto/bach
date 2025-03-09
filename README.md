@@ -225,8 +225,9 @@ The general idea of `bach`'s algorithm is to do the following *for each SNP*:
 1. Subset samples to only those which are **heterozygous**. If more than
 `--max-drop` samples have homozygous or missing genotypes, then skip this SNP.
 2. Look up all reads overlapping the SNP. Bin the locations of their **mates**
-in two lists, with bin width `--window-step`, separated by the allele of the
-mate overlapping the SNP. Skip the bin that **overlaps the SNP** itself.
+in two lists, with bin width `--window-step`, counting the number of net
+reference mates per bin. (That is, ref minus alt.) Skip the bin that
+**overlaps the SNP** itself.
 3. Slide a **window** (width `--window-width`) as chunks of bins.
 4. For each window, determine *for each sample* whether mates of one allele
 are more abundant than the other. Sum across this window's bins by allele.

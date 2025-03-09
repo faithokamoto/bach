@@ -224,11 +224,10 @@ contact the chromosome within this window, and thus it is biased towards *a*.
 The general idea of `bach`'s algorithm is to do the following *for each SNP*:
 1. Subset samples to only those which are **heterozygous**. If more than
 `--max-drop` samples have homozygous or missing genotypes, then skip this SNP.
-2. Look up all reads overlapping the SNP. Save the locations of their **mates**
-in two lists, separated by the allele of the mate overlapping the SNP.
-3. Count the number of mates in bins of `--window-step` width. Skip the bin that
-**overlaps the SNP** itself.
-4. Slide a **window** (width `--window-width`) as chunks of bins.
+2. Look up all reads overlapping the SNP. Bin the locations of their **mates**
+in two lists, with bin width `--window-step`, separated by the allele of the
+mate overlapping the SNP. Skip the bin that **overlaps the SNP** itself.
+3. Slide a **window** (width `--window-width`) as chunks of bins.
 4. For each window, determine *for each sample* whether mates of one allele
 are more abundant than the other. Sum across this window's bins by allele.
     * The overall bias of the window is either `ref` or `alt` based on which
@@ -244,7 +243,7 @@ are more abundant than the other. Sum across this window's bins by allele.
 > of the total number of heterozygotes. If there are 20 total samples, but
 > two of them were dropped due to a homozygous genotype, then the number
 > which may have a neutral bias is `(20 - 2) × --max-neutral`.
-6. Assuming this window wasn't dropped:
+5. Assuming this window wasn't dropped:
     * Attempt to extend it by one more bin. If the extension has the same bias,
     add it to the window. Repeat until extension is no longer possible.
     * Calculate a **two-tailed [binomial][BinomTest] p-value**, given `n`

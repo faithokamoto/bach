@@ -13,6 +13,7 @@ Heavily based on code written by ChatGPT.
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
+from math import ceil # Calculate number of bins needed
 import os  # File operations
 import pysam  # Reading BAMs and VCF
 from scipy.stats import binomtest # Test significance of each biased site
@@ -133,8 +134,8 @@ def locate_bams(bam_dir: str, bam_ext: str, min_samples: int) -> SAMPLE_BAMS:
                          f'are only {len(bams)} {bam_dir}/*{bam_ext} files')
     return bams
 
-def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, 
-                        ref: str, alt: str) -> MATE_POS:
+def get_allele_mate_pos(bam_path: str, chrom: str, pos: int, ref: str, alt: str,
+                        max_pos: int, step: int) -> BIN_COUNTS:
     """Get mate positions for reads supporting ref/alt alleles.
 
     Ignore reads with unmapped mates and reads that do not cover the SNP.
@@ -155,30 +156,33 @@ def get_allele_mate_pos(bam_path: str, chrom: str, pos: int,
 
     Returns
     -------
-    MATE_POS
-        Two lists of bp positions: mates of ref/alt-supporting reads.
+    BIN_COUNTS
+        Counts of mates in specific bins.
     """
 
-    ref_mates = []
-    alt_mates = []
+    num_bins = ceil(max_pos / step) + 1
+    snp_bin = pos // step
+    bin_counts = {allele: [0] * num_bins for allele in ['ref', 'alt']}
     with pysam.AlignmentFile(bam_path, 'rb') as bam_file:
         for read in bam_file.fetch(chrom, pos, pos + 1):
             # Only use mate pairs with high-quality mapping to the same chr
             if (read.is_secondary or read.mate_is_unmapped
                 or read.reference_name != read.next_reference_name):
                 continue
+
+            mate_bin = read.next_reference_start // step
+            # Also ignore mate pairs within the same bin as the SNP
+            if snp_bin == mate_bin: continue
             
             ref_positions = read.get_reference_positions(full_length=True)
             # Handle deletions of the SNP position
             if pos not in ref_positions: continue
             
-            base = read.query_sequence[ref_positions.index(pos)]
-            if base == ref:
-                ref_mates.append(read.next_reference_start)
-            elif base == alt:
-                alt_mates.append(read.next_reference_start)
+            base = read.query_sequence[ref_positions.index(pos)] 
+            if base == ref: bin_counts['ref'][mate_bin] += 1
+            elif base == alt: bin_counts['alt'][mate_bin] += 1
     
-    return {'ref': sorted(ref_mates), 'alt': sorted(alt_mates)}
+    return bin_counts
 
 def count_biased_samples(bin_counts: Dict[str, BIN_COUNTS], start: int,
                          end: int) -> Tuple[int, int, int]:
@@ -241,42 +245,6 @@ def bias_type(ref_count: int, alt_count: int, neutral_count: int,
     if neutral_count > max_neutral or min(ref_count, alt_count) > max_opposite:
         return 'neutral'
     else: return 'ref' if ref_count > alt_count else 'alt'
-
-def count_mates_in_bins(mates: MATE_POS, max_pos: int, ignore_pos: int,
-                        step: int) -> Dict[str, List[int]]:
-    """
-    Count mate positions by allele within bins for a given sample.
-
-    Parameters
-    ----------
-    mates : MATE_POS
-        This sample's mates
-    max_pos : int
-        The maximum position to consider.
-    ignore_pos : int
-        Position to ignore (set windows containing it to 0).
-    step : int
-        The bin size.
-
-    Returns
-    -------
-    dict
-        Dictionary mapping sample names to lists of counts per bin.
-    """
-    bins = list(range(0, max_pos, step))
-    bad_bin = (ignore_pos // step, ignore_pos // step + step)
-    bin_counts = {sample: [0] * len(bins) for sample in mates}
-    
-    for sample, positions in mates.items():
-        bin_idx = 0
-        for pos in positions:
-            if bad_bin[0] <= pos <= bad_bin[1]: continue # Skip this read
-
-            while bin_idx < len(bins) - 1 and pos >= bins[bin_idx + 1]:
-                bin_idx += 1
-            bin_counts[sample][bin_idx] += 1
-    
-    return bin_counts
 
 def find_biased_windows(bin_counts: Dict[str, BIN_COUNTS], window_width: int,
                         step: int, max_opposite: int, max_neutral: int
@@ -390,9 +358,8 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     bin_counts = dict()
     for sample, file in bams.items():
         if is_het[sample]:
-            mates = get_allele_mate_pos(file, chrom, snp_pos, ref, alt)
-            bin_counts[sample] = count_mates_in_bins(
-                mates, chr_length, snp_pos, window_step)
+            bin_counts[sample] = get_allele_mate_pos(
+                file, chrom, snp_pos, ref, alt, chr_length, window_step)
     
     # Convert to absolute numbers
     max_opposite_num = int(max_opposite * len(bin_counts))

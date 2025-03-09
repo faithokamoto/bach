@@ -181,7 +181,7 @@ another, as measured by Hi-C read mates. That is, given:
 * *p* window location precision
 * *w* minimum window width, given that *w* is a multiple of *p*
 
-Find all windows [*x*, *y*] (for *x* and *y* multiples of *p* and *y* − *x* ≥
+Find all windows [*x*, *y*) (for *x* and *y* multiples of *p* and *y* − *x* ≥
 *w*) on the variant's chromosome such that for some allele *a*:
 * given mate counts by allele:
     * *C*<sub>*A*</sub> = size( *M*<sub>*a*,*i*</sub> ∈ [*x*, *y*] ) for sample *i*

@@ -97,9 +97,9 @@ bias parameters:
 
 window parameters:
   -w Mbp, --window-width Mbp
-                        Minimum window width, in Mbp, to scan with
+                        Minimum window width, in Mbp
   -s Mbp, --window-step Mbp
-                        Window step size, in Mbp
+                        Window step size, in Mb
 ```
 
 ### Background

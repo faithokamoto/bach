@@ -13,6 +13,7 @@ Heavily based on code written by ChatGPT.
 
 import argparse  # Command-line argument parsing
 import csv  # CSV output
+from decimal import Decimal # Floating point modulus
 from math import ceil # Calculate number of bins needed
 import os  # File operations
 import pysam  # Reading BAMs and VCF
@@ -63,10 +64,10 @@ def parse_arguments() -> argparse.Namespace:
     
     # Window arguments
     window_args = parser.add_argument_group('window parameters')
+    window_args.add_argument('-w', '--window-width', metavar='Mbp', type=int,
+                             help='Minimum window width, in Mbp')
     window_args.add_argument('-s', '--window-step', metavar='Mbp', type=float, 
                              help='Window step size, in Mbp')
-    window_args.add_argument('-w', '--window-width', metavar='#', type=int,
-                             help='Minimum window width, as a number of steps')
     
     return parser.parse_args()
 
@@ -90,14 +91,20 @@ def check_illogical_arguments(args: argparse.Namespace) -> None:
                          'must be in [0, 1)')
     
     if args.window_width < 1:
-        raise ValueError(f'Minimum window width {args.window_width} '
-                         'must be at least 1 step')
+        raise ValueError(f'Window width {args.window_width}Mbp must be >=1Mbp')
+    if args.window_width >= 50:
+        raise ValueError(f'Window width {args.window_width}Mbp is too large. '
+                         'Did you enter a value in bp instead of Mbp?')
     
     if args.window_step < 0.5:
         raise ValueError(f'Window step {args.window_step}Mbp must be >=0.5Mbp.')
     if args.window_step >= 10:
         raise ValueError(f'Window step {args.window_step}Mbp is too large. '
                             'Did you enter a vaue in bp instead of Mbp?')
+    
+    if args.window_width % Decimal(str(args.window_step)) != 0:
+        raise ValueError(f'Window width {args.window_width}Mbp must be a '
+                         f'multiple of window step {args.window_step}Mbp')
     
 def locate_bams(bam_dir: str, bam_ext: str, min_samples: int) -> SAMPLE_BAMS:
     """Find BAM files within given directory.
@@ -358,8 +365,8 @@ def run_pipeline(bams: SAMPLE_BAMS, max_opposite: float, max_neutral: float,
     # Convert to absolute numbers
     max_opposite_num = int(max_opposite * len(bin_counts))
     max_neutral_num = int(max_neutral * len(bin_counts))
-    return find_biased_windows(bin_counts, window_width, window_step,
-                               max_opposite_num, max_neutral_num)
+    return find_biased_windows(bin_counts, window_width // window_step,
+                               window_step, max_opposite_num, max_neutral_num)
 
 if __name__ == '__main__':
     args = parse_arguments()
@@ -368,7 +375,8 @@ if __name__ == '__main__':
     bams = locate_bams(args.bam_dir, args.bam_ext, args.max_drop + 1)
     print(f'{len(bams)} BAMs found in {args.bam_dir}/<sample>{args.bam_ext}')
 
-    # Convert step to bp whole number
+    # Convert window arguments to bp whole numbers
+    window_width = int(args.window_width * MBP)
     window_step = int(args.window_step * MBP)
 
     # Main logic
@@ -393,9 +401,8 @@ if __name__ == '__main__':
 
                 # Get results for this variant
                 biased_segments = run_pipeline(
-                    bams, args.max_opposite, args.max_neutral,
-                    args.max_drop, record, chr_length, 
-                    args.window_width, window_step)
+                    bams, args.max_opposite, args.max_neutral, args.max_drop,
+                    record, chr_length, window_width, window_step)
                 
                 if biased_segments is None: variants_dropped += 1
                 else:

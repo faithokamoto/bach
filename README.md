@@ -43,15 +43,15 @@ conda activate bach
 To run `bach` on the provided test data, use 
 ```
 ./bach --max-opposite 0 --max-neutral 0 --max-drop 1 \
-    --window-width 3 --window-step 5 \
+    --window-width 15 --window-step 5 \
     -v test/snps.vcf -d test/bams -o output.csv
 ```
 
 This commands correspond to: "Using BAMs in `test/bams` and VCF `test/snps.vcf`,
 output biased segments to `output.csv`. At most one sample per SNP may be
 dropped/ignored due to a missing or homozygous genotype. No samples within a 
-biased window may have opposite or neutral bias. Use a step of 5Mbp and windows
-of width at least three steps." Algorithm details in [Algorithm](#algorithm).
+biased window may have opposite or neutral bias. Use a step of 5Mbp and minimum
+window size 15Mbp." Algorithm details in [Algorithm](#algorithm).
 
 The output files should be the same as `test/output.csv`
 
